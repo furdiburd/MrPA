@@ -1,15 +1,15 @@
-(function() {
-  'use strict';
+(function () {
+  "use strict";
 
   const DEBUG = true;
-  const log = (...args) => DEBUG && console.log('[MrPa]', ...args);
-  const error = (...args) => console.error('[MrPa]', ...args);
+  const log = (...args) => DEBUG && console.log("[MrPa]", ...args);
+  const error = (...args) => console.error("[MrPa]", ...args);
 
   const INITIAL_LIMIT = 75;
   const INITIAL_DELAY = 100;
   const LOAD_MORE_DELAY = 200;
-  const CACHE_DURATION = 5 * 60 * 1000;
-  const CACHE_KEY_PREFIX = 'rpu_cache_';
+  const CACHE_DURATION = 10 * 60 * 1000;
+  const CACHE_KEY_PREFIX = "rpu_cache_";
   let loadingInterval = null;
   let loadingProgress = { comments: 0, posts: 0 };
 
@@ -20,14 +20,14 @@
 
   function getSubpageType() {
     const path = window.location.pathname.toLowerCase();
-    if (path.includes('/comments')) return 'comments';
-    if (path.includes('/submitted') || path.includes('/posts')) return 'posts';
-    return 'overview';
+    if (path.includes('/comments')) return "comments";
+    if (path.includes('/submitted') || path.includes('/posts')) return "posts";
+    return "overview";
   }
 
   function isProfilePrivate() {
     if (document.querySelector('img[src*="snoo_wave.png"]')) return true;
-    return document.body.innerHTML.includes('snoo_wave.png');
+    return document.body.innerHTML.includes("snoo_wave.png");
   }
 
   function updateStatusMessage(newText, isHtml = false) {
@@ -35,12 +35,12 @@
     if (snooImg) {
       let container = snooImg.parentElement;
       for (let i = 0; i < 5 && container; i++) {
-        const textElements = container.querySelectorAll('p, h1, h2, h3, span, div');
+        const textElements = container.querySelectorAll("p, h1, h2, h3, span, div");
         for (const el of textElements) {
           if (el.contains(snooImg) || el.children.length > 3) continue;
           const text = el.textContent.trim();
-          if ((text.length > 10 && text.length < 200 && !text.includes('http')) || el.id === 'rpu-status') {
-            el.id = 'rpu-status';
+          if ((text.length > 10 && text.length < 200 && !text.includes("http")) || el.id === "rpu-status") {
+            el.id = "rpu-status";
             el.textContent = '';
             if (isHtml) {
               const span = document.createElement('span');
@@ -48,7 +48,7 @@
               el.appendChild(span);
               if (newText.includes('<br>')) {
                 el.appendChild(document.createElement('br'));
-                const subSpan = document.createElement('span');
+                const subSpan = document.createElement("span");
                 const subText = newText.split('<br>')[1].replace(/<[^>]*>/g, '');
                 subSpan.style.fontSize = '0.9em';
                 subSpan.style.opacity = '0.8';
@@ -72,7 +72,7 @@
   function startLoadingIndicator() {
     let dotCount = 1;
     loadingProgress = { comments: 0, posts: 0 };
-    const statusEl = updateStatusMessage('Fetching user comments and posts.', false);
+    const statusEl = updateStatusMessage("Fetching user comments and posts.", false);
     if (!statusEl) return null;
     statusEl.id = 'rpu-status';
 
@@ -105,7 +105,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return new DOMParser().parseFromString(await response.text(), 'text/html');
     } catch (err) {
-      error('Failed to fetch search page:', err);
+      error("Failed to fetch search page:", err);
       return null;
     }
   }
@@ -148,7 +148,7 @@
         commentsSeenIds: Array.from(commentsSeenIds),
         commentSortsTried: Array.from(commentSortsTried)
       }));
-    } catch (err) {}
+    } catch (err) { }
   }
 
   function updateCache(username) {
@@ -169,17 +169,17 @@
         if (!context.comment?.id) return;
 
         const commentId = context.comment.id;
-        const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector('.i18n-search-comment-content');
+        const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector(".i18n-search-comment-content");
         const body = contentEl?.textContent?.trim();
         if (!body) return;
 
         let score = 0;
-        const votesContainer = unit.querySelector('p.text-neutral-content-weak');
+        const votesContainer = unit.querySelector("p.text-neutral-content-weak");
         const voteEl = votesContainer?.querySelector('faceplate-number[number]');
         if (voteEl) score = parseInt(voteEl.getAttribute('number'), 10) || 0;
 
         let created_utc = Date.now() / 1000;
-        const timeEls = Array.from(unit.querySelectorAll('faceplate-timeago[ts]'));
+        const timeEls = Array.from(unit.querySelectorAll("faceplate-timeago[ts]"));
         const timeEl = timeEls.length ? timeEls[timeEls.length - 1] : null;
         if (timeEl?.getAttribute('ts')) created_utc = new Date(timeEl.getAttribute('ts')).getTime() / 1000;
 
@@ -193,7 +193,7 @@
           permalink: `/r/${subreddit}/comments/${postIdClean}/comment/${commentIdClean}/`,
           created_utc
         });
-      } catch (err) {}
+      } catch (err) { }
     });
     return comments;
   }
@@ -226,7 +226,7 @@
     };
 
     let postUnits = doc.querySelectorAll('[data-testid="search-sdui-post-unit"]');
-    if (!postUnits.length) postUnits = doc.querySelectorAll('shreddit-post');
+    if (!postUnits.length) postUnits = doc.querySelectorAll("shreddit-post");
     if (!postUnits.length) postUnits = doc.querySelectorAll('search-telemetry-tracker[view-events*="search/view/post"]');
 
     if (!postUnits.length) {
@@ -236,7 +236,7 @@
           const parentContainer = tracker.closest('[data-testid]') || tracker.parentElement?.parentElement;
           const post = extractPost(context, parentContainer);
           if (post) posts.push(post);
-        } catch (err) {}
+        } catch (err) { }
       });
       return posts;
     }
@@ -247,7 +247,7 @@
         const context = JSON.parse(decodeHtmlEntities(tracker.getAttribute('data-faceplate-tracking-context') || ''));
         const post = extractPost(context, unit);
         if (post) posts.push(post);
-      } catch (err) {}
+      } catch (err) { }
     });
     return posts;
   }
@@ -332,7 +332,7 @@
   }
 
   function escapeHtml(text) {
-    const div = document.createElement('div');
+    const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
   }
@@ -341,9 +341,9 @@
     const now = Date.now() / 1000;
     const diff = now - timestamp;
     const date = new Date(timestamp * 1000);
-    const dateStr = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
+    const dateStr = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
 
-    if (diff < 60) return 'just now';
+    if (diff < 60) return "just now";
     if (diff < 3600) { const m = Math.floor(diff / 60); return `${m} minute${m !== 1 ? 's' : ''} ago`; }
     if (diff < 86400) { const h = Math.floor(diff / 3600); return `${h} hour${h !== 1 ? 's' : ''} ago`; }
 
@@ -388,7 +388,7 @@
           <a href="https://www.reddit.com/r/${comment.subreddit}" style="color: #4fbcff; text-decoration: none; font-size: 12px; font-weight: 500;">r/${comment.subreddit}</a>
           <span style="color: #818384; font-size: 12px; margin-left: 8px;">• ${commentDate}</span>
         </div>
-        ${comment.post_title ? `<a href="${commentUrl}" target="_blank" style="color: #818384; font-size: 13px; margin-bottom: 8px; font-style: italic; display: block; text-decoration: none;">${escapeHtml(comment.post_title)}</a>` : ''}
+        ${comment.post_title ? `<a href="${commentUrl}" target="_blank" style="color: #818384; font-size: 13px; margin-bottom: 8px; font-style: italic; display: block; text-decoration: none;">${escapeHtml(comment.post_title)}</a>` : ""}
         <a href="${commentUrl}" target="_blank" style="color: #d7dadc; font-size: 14px; line-height: 1.6; margin-bottom: 8px; white-space: pre-wrap; word-wrap: break-word; display: block; text-decoration: none;">${escapeHtml(bodyText)}</a>
         <div style="display: flex; gap: 12px; align-items: center;">
           <span style="color: #ff4500; font-weight: 600; font-size: 12px;">↑ ${comment.score}</span>
@@ -400,33 +400,33 @@
   function injectProfileData(username, posts, comments, stats, postsUrl, commentsUrl, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried = new Set()) {
     const allElements = document.querySelectorAll('*');
     for (const el of allElements) {
-      if (el.textContent.includes('likes to keep their posts hidden') && el.children.length < 10) { el.remove(); break; }
+      if (el.textContent.includes("likes to keep their posts hidden") && el.children.length < 10) { el.remove(); break; }
     }
 
-    let targetDiv = document.querySelector('div[rpl].flex.flex-col.items-center.w-full') ||
-                    document.querySelector('shreddit-profile-overview') ||
-                    document.querySelector('main') ||
-                    document.querySelector('#main-content');
+    let targetDiv = document.querySelector("div[rpl].flex.flex-col.items-center.w-full") ||
+      document.querySelector("shreddit-profile-overview") ||
+      document.querySelector("main") ||
+      document.querySelector("#main-content");
 
     if (!targetDiv) {
       const main = document.querySelector('main');
-      if (main) { targetDiv = document.createElement('div'); main.appendChild(targetDiv); }
+      if (main) { targetDiv = document.createElement("div"); main.appendChild(targetDiv); }
       else return;
     }
 
-    const buttonStyle = 'padding: 6px 14px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;';
-    const buttonDisabledStyle = 'padding: 6px 14px; background: #343536; color: #818384; border: none; border-radius: 16px; cursor: not-allowed; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;';
-    const sortButtonActive = 'padding: 6px 12px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;';
-    const sortButtonInactive = 'padding: 6px 12px; background: transparent; color: #818384; border: 1px solid #343536; border-radius: 16px; cursor: pointer; font-weight: 500; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;';
+    const buttonStyle = "padding: 6px 14px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
+    const buttonDisabledStyle = "padding: 6px 14px; background: #343536; color: #818384; border: none; border-radius: 16px; cursor: not-allowed; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
+    const sortButtonActive = "padding: 6px 12px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
+    const sortButtonInactive = "padding: 6px 12px; background: transparent; color: #818384; border: 1px solid #343536; border-radius: 16px; cursor: pointer; font-weight: 500; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
 
-    const controlBar = document.createElement('div');
-    controlBar.style.cssText = 'margin: 12px 16px; padding: 10px 16px; background: var(--color-neutral-background-weak, #1a1a1b); border: 1px solid var(--color-neutral-border, #343536); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;';
-    
-    const statsSection = document.createElement('div');
-    statsSection.style.cssText = 'display: flex; align-items: center; gap: 8px; font-size: 12px; color: #818384;';
-    statsSection.title = 'Only the newest ~75 posts and comments are fetched by default';
-    
-    const postsLink = document.createElement('a');
+    const controlBar = document.createElement("div");
+    controlBar.style.cssText = "margin: 12px 16px; padding: 10px 16px; background: var(--color-neutral-background-weak, #1a1a1b); border: 1px solid var(--color-neutral-border, #343536); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;";
+
+    const statsSection = document.createElement("div");
+    statsSection.style.cssText = "display: flex; align-items: center; gap: 8px; font-size: 12px; color: #818384;";
+    statsSection.title = "Only the newest ~75 posts and comments are fetched by default";
+
+    const postsLink = document.createElement("a");
     postsLink.href = postsUrl;
     postsLink.target = '_blank';
     postsLink.style.cssText = 'color: #4fbcff; text-decoration: none;';
@@ -435,8 +435,8 @@
     postsCountSpan.textContent = stats.postCount;
     postsLink.appendChild(postsCountSpan);
     postsLink.appendChild(document.createTextNode(' Posts'));
-    
-    const commentsLink = document.createElement('a');
+
+    const commentsLink = document.createElement("a");
     commentsLink.href = commentsUrl;
     commentsLink.target = '_blank';
     commentsLink.style.cssText = 'color: #4fbcff; text-decoration: none;';
@@ -445,36 +445,36 @@
     commentsCountSpan.textContent = stats.commentCount;
     commentsLink.appendChild(commentsCountSpan);
     commentsLink.appendChild(document.createTextNode(' Comments'));
-    
+
     statsSection.appendChild(postsLink);
     statsSection.appendChild(document.createTextNode(' · '));
     statsSection.appendChild(commentsLink);
 
-    const controlsSection = document.createElement('div');
-    controlsSection.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+    const controlsSection = document.createElement("div");
+    controlsSection.style.cssText = "display: flex; align-items: center; gap: 8px;";
 
-    const sortNewBtn = document.createElement('button');
+    const sortNewBtn = document.createElement("button");
     sortNewBtn.textContent = 'New';
     sortNewBtn.style.cssText = sortButtonActive;
 
-    const sortTopBtn = document.createElement('button');
+    const sortTopBtn = document.createElement("button");
     sortTopBtn.textContent = 'Top';
     sortTopBtn.style.cssText = sortButtonInactive;
 
-    const separator = document.createElement('span');
-    separator.style.cssText = 'width: 1px; height: 16px; background: #343536; margin: 0 4px;';
+    const separator = document.createElement("span");
+    separator.style.cssText = "width: 1px; height: 16px; background: #343536; margin: 0 4px;";
 
-    const loadMorePostsBtn = document.createElement('button');
+    const loadMorePostsBtn = document.createElement("button");
     loadMorePostsBtn.id = 'rpu-load-more-posts';
     loadMorePostsBtn.textContent = postsNextUrl ? 'Load more posts' : 'No more posts';
     loadMorePostsBtn.style.cssText = postsNextUrl ? buttonStyle : buttonDisabledStyle;
     loadMorePostsBtn.disabled = !postsNextUrl;
 
-    const loadMoreCommentsBtn = document.createElement('button');
+    const loadMoreCommentsBtn = document.createElement("button");
     loadMoreCommentsBtn.id = 'rpu-load-more-comments';
 
-    const initialCommentSorts = (commentSortsTried instanceof Set) ? commentSortsTried : new Set(commentSortsTried || ['new']);
-    const COMMENT_SORTS = ['new','relevance','top'];
+    const initialCommentSorts = (commentSortsTried instanceof Set) ? commentSortsTried : new Set(commentSortsTried || ["new"]);
+    const COMMENT_SORTS = ["new", "relevance", "top"];
     const anyMoreCommentSorts = COMMENT_SORTS.some(s => !initialCommentSorts.has(s));
     const canContinueComments = !!commentsNextUrl || anyMoreCommentSorts;
 
@@ -487,7 +487,7 @@
     controlsSection.appendChild(separator);
     controlsSection.appendChild(loadMorePostsBtn);
     controlsSection.appendChild(loadMoreCommentsBtn);
-    
+
     controlBar.appendChild(statsSection);
     controlBar.appendChild(controlsSection);
 
@@ -503,7 +503,7 @@
       username, posts: [...posts], comments: [...comments],
       postsNextUrl, commentsNextUrl,
       postsSeenIds: new Set(postsSeenIds), commentsSeenIds: new Set(commentsSeenIds),
-      sortOrder: 'new',
+      sortOrder: "new",
       commentSortsTried: new Set(initialCommentSorts)
     };
 
@@ -520,14 +520,14 @@
         ...commentsToShow.map(c => ({ ...c, type: 'comment' }))
       ];
 
-      if (window.rpuState.sortOrder === 'top') allContent.sort((a, b) => b.score - a.score);
+      if (window.rpuState.sortOrder === "top") allContent.sort((a, b) => b.score - a.score);
       else allContent.sort((a, b) => b.created_utc - a.created_utc);
 
       feed.textContent = '';
-      if (allContent.length === 0) {
-        const emptyDiv = document.createElement('div');
-        emptyDiv.style.cssText = 'padding: 40px; text-align: center; color: #818384;';
-        emptyDiv.textContent = 'No content found';
+        if (allContent.length === 0) {
+        const emptyDiv = document.createElement("div");
+        emptyDiv.style.cssText = "padding: 40px; text-align: center; color: #818384;";
+        emptyDiv.textContent = "No content found";
         feed.appendChild(emptyDiv);
       } else {
         const fragment = document.createDocumentFragment();
@@ -546,15 +546,15 @@
       if (postCount) postCount.textContent = postsToShow.length;
       if (commentCount) commentCount.textContent = commentsToShow.length;
 
-      const postsBtn = document.getElementById('rpu-load-more-posts');
-      const commentsBtn = document.getElementById('rpu-load-more-comments');
+      const postsBtn = document.getElementById("rpu-load-more-posts");
+      const commentsBtn = document.getElementById("rpu-load-more-comments");
       if (postsBtn) postsBtn.style.display = currentSubpage === 'comments' ? 'none' : '';
       if (commentsBtn) commentsBtn.style.display = currentSubpage === 'posts' ? 'none' : '';
     };
 
     loadMorePostsBtn.addEventListener('click', async () => {
       if (!window.rpuState.postsNextUrl) return;
-      loadMorePostsBtn.textContent = 'Loading...';
+      loadMorePostsBtn.textContent = "Loading...";
       loadMorePostsBtn.disabled = true;
       loadMorePostsBtn.style.cssText = buttonDisabledStyle;
 
@@ -569,14 +569,14 @@
         loadMorePostsBtn.disabled = !result.nextPageUrl;
         loadMorePostsBtn.style.cssText = result.nextPageUrl ? buttonStyle : buttonDisabledStyle;
       } catch (err) {
-        loadMorePostsBtn.textContent = 'Error - try again';
+        loadMorePostsBtn.textContent = "Error - try again";
         loadMorePostsBtn.disabled = false;
         loadMorePostsBtn.style.cssText = buttonStyle;
       }
     });
 
     loadMoreCommentsBtn.addEventListener('click', async () => {
-      loadMoreCommentsBtn.textContent = 'Loading...';
+      loadMoreCommentsBtn.textContent = "Loading...";
       loadMoreCommentsBtn.disabled = true;
       loadMoreCommentsBtn.style.cssText = buttonDisabledStyle;
 
@@ -588,33 +588,34 @@
           const result = await fetchUserComments(username, window.rpuState.commentsNextUrl, Infinity, LOAD_MORE_DELAY, window.rpuState.comments, window.rpuState.commentsSeenIds);
           window.rpuState.comments = result.comments;
           window.rpuState.commentsSeenIds = result.seenIds;
-          candidateNextUrl = candidateNextUrl || result.nextPageUrl || null;
+          candidateNextUrl = result.nextPageUrl;
           updateCache(username);
         }
-        const otherSorts = ['relevance', 'top'];
-        for (const sort of otherSorts) {
+        // Mark all sorts as tried
+        const COMMENT_SORTS = ["new", "relevance", "top"];
+        for (const sort of COMMENT_SORTS) {
           if (window.rpuState.commentSortsTried.has(sort)) continue;
           const altUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=${sort}`;
           const res = await fetchUserComments(username, altUrl, Infinity, LOAD_MORE_DELAY, window.rpuState.comments, window.rpuState.commentsSeenIds);
           window.rpuState.comments = res.comments;
           window.rpuState.commentsSeenIds = res.seenIds;
           window.rpuState.commentSortsTried.add(sort);
-          candidateNextUrl = candidateNextUrl || res.nextPageUrl || null;
+          candidateNextUrl = res.nextPageUrl;
           updateCache(username);
         }
 
         window.rpuState.commentsNextUrl = candidateNextUrl;
         updateFeedDisplay();
 
-        const anyMoreSorts = ['new','relevance','top'].some(s => !window.rpuState.commentSortsTried.has(s));
+        const anyMoreSorts = COMMENT_SORTS.some(s => !window.rpuState.commentSortsTried.has(s));
         const canContinue = !!window.rpuState.commentsNextUrl || anyMoreSorts;
 
-        loadMoreCommentsBtn.textContent = canContinue ? 'Load more comments' : 'No comments';
+        loadMoreCommentsBtn.textContent = canContinue ? "Load more comments" : "No more comments";
         loadMoreCommentsBtn.disabled = !canContinue;
         loadMoreCommentsBtn.style.cssText = canContinue ? buttonStyle : buttonDisabledStyle;
       } catch (err) {
         console.error('[Reddit Profile Unveiler] Failed loading more comments', err);
-        loadMoreCommentsBtn.textContent = 'Error - try again';
+        loadMoreCommentsBtn.textContent = "Error - try again";
         loadMoreCommentsBtn.disabled = false;
         loadMoreCommentsBtn.style.cssText = buttonStyle;
       }
@@ -622,7 +623,7 @@
 
     sortNewBtn.addEventListener('click', () => {
       if (window.rpuState.sortOrder === 'new') return;
-      window.rpuState.sortOrder = 'new';
+      window.rpuState.sortOrder = "new";
       sortNewBtn.style.cssText = sortButtonActive;
       sortTopBtn.style.cssText = sortButtonInactive;
       updateFeedDisplay();
@@ -630,20 +631,20 @@
 
     sortTopBtn.addEventListener('click', () => {
       if (window.rpuState.sortOrder === 'top') return;
-      window.rpuState.sortOrder = 'top';
+      window.rpuState.sortOrder = "top";
       sortTopBtn.style.cssText = sortButtonActive;
       sortNewBtn.style.cssText = sortButtonInactive;
       updateFeedDisplay();
     });
 
-    let postsToShow = subpage === 'comments' ? [] : posts;
-    let commentsToShow = subpage === 'posts' ? [] : comments;
+    let postsToShow = subpage === "comments" ? [] : posts;
+    let commentsToShow = subpage === "posts" ? [] : comments;
     const allContent = [...postsToShow.map(p => ({ ...p, type: 'post' })), ...commentsToShow.map(c => ({ ...c, type: 'comment' }))].sort((a, b) => b.created_utc - a.created_utc);
-    
+
     if (allContent.length === 0) {
-      const emptyDiv = document.createElement('div');
-      emptyDiv.style.cssText = 'padding: 40px; text-align: center; color: #818384;';
-      emptyDiv.textContent = 'No content found';
+      const emptyDiv = document.createElement("div");
+      emptyDiv.style.cssText = "padding: 40px; text-align: center; color: #818384;";
+      emptyDiv.textContent = "No content found";
       feedContainer.appendChild(emptyDiv);
     } else {
       const fragment = document.createDocumentFragment();
@@ -657,7 +658,7 @@
       feedContainer.appendChild(fragment);
     }
 
-    targetDiv.textContent = '';
+    targetDiv.textContent = "";
     targetDiv.appendChild(controlBar);
     targetDiv.appendChild(feedContainer);
   }
@@ -690,7 +691,7 @@
       commentsNextUrl = cachedData.commentsNextUrl;
       postsSeenIds = new Set(cachedData.postsSeenIds || []);
       commentsSeenIds = new Set(cachedData.commentsSeenIds || []);
-      var commentSortsTried = new Set(cachedData.commentSortsTried || ['new']);
+      var commentSortsTried = new Set(cachedData.commentSortsTried || ["new"]);
 
       const needPosts = (subpage === 'overview' || subpage === 'posts') && posts.length === 0;
       const needComments = (subpage === 'overview' || subpage === 'comments') && comments.length === 0;
@@ -712,7 +713,7 @@
       const loadingIndicator = startLoadingIndicator();
       const fetchPosts = subpage === 'overview' || subpage === 'posts';
       const fetchComments = subpage === 'overview' || subpage === 'comments';
-      var commentSortsTried = new Set(['new']);
+      var commentSortsTried = new Set(["new"]);
 
       const [postsResult, commentsResult] = await Promise.all([
         fetchPosts ? fetchUserPosts(username) : Promise.resolve({ posts: [], nextPageUrl: null, seenIds: new Set() }),
@@ -732,7 +733,7 @@
     }
 
     if (posts.length === 0 && comments.length === 0) {
-      updateStatusMessage('No data found about user.');
+      updateStatusMessage("No data found about user.");
       return;
     }
 
