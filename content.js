@@ -179,7 +179,8 @@
         if (voteEl) score = parseInt(voteEl.getAttribute('number'), 10) || 0;
 
         let created_utc = Date.now() / 1000;
-        const timeEl = unit.querySelector('faceplate-timeago[ts]');
+        const timeEls = Array.from(unit.querySelectorAll('faceplate-timeago[ts]'));
+        const timeEl = timeEls.length ? timeEls[timeEls.length - 1] : null;
         if (timeEl?.getAttribute('ts')) created_utc = new Date(timeEl.getAttribute('ts')).getTime() / 1000;
 
         const postIdClean = (context.post?.id || '').replace('t3_', '');
