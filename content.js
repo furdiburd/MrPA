@@ -591,7 +591,6 @@
           candidateNextUrl = result.nextPageUrl;
           updateCache(username);
         }
-        // Mark all sorts as tried
         const COMMENT_SORTS = ["new", "relevance", "top"];
         for (const sort of COMMENT_SORTS) {
           if (window.rpuState.commentSortsTried.has(sort)) continue;
