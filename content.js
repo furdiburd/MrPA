@@ -609,7 +609,7 @@
         const anyMoreSorts = ['new','relevance','top'].some(s => !window.rpuState.commentSortsTried.has(s));
         const canContinue = !!window.rpuState.commentsNextUrl || anyMoreSorts;
 
-        loadMoreCommentsBtn.textContent = canContinue ? '+Comments' : 'No comments';
+        loadMoreCommentsBtn.textContent = canContinue ? 'Load more comments' : 'No comments';
         loadMoreCommentsBtn.disabled = !canContinue;
         loadMoreCommentsBtn.style.cssText = canContinue ? buttonStyle : buttonDisabledStyle;
       } catch (err) {
