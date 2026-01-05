@@ -2,8 +2,8 @@
   'use strict';
 
   const DEBUG = true;
-  const log = (...args) => DEBUG && console.log('[Reddit Profile Unveiler]', ...args);
-  const error = (...args) => console.error('[Reddit Profile Unveiler]', ...args);
+  const log = (...args) => DEBUG && console.log('[MrPa]', ...args);
+  const error = (...args) => console.error('[MrPa]', ...args);
 
   const INITIAL_LIMIT = 75;
   const INITIAL_DELAY = 100;
