@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const DEBUG = true;
+  const DEBUG = false;
   const log = (...args) => DEBUG && console.log("[MrPa]", ...args);
   const error = (...args) => console.error("[MrPa]", ...args);
 
@@ -85,7 +85,7 @@
       const progressSpan = document.createElement('span');
       progressSpan.style.fontSize = '0.9em';
       progressSpan.style.opacity = '0.8';
-      progressSpan.textContent = `Found ${loadingProgress.comments}C / ${loadingProgress.posts}P`;
+      progressSpan.textContent = `Found ${loadingProgress.comments} C / ${loadingProgress.posts} P`;
       statusEl.appendChild(progressSpan);
       dotCount = (dotCount % 3) + 1;
     };
@@ -161,40 +161,40 @@
 
   function extractCommentsFromSearchHTML(doc) {
     const comments = [];
-    doc.querySelectorAll('[data-testid="search-sdui-comment-unit"]').forEach(unit => {
-      try {
-        const tracker = unit.querySelector('search-telemetry-tracker[data-faceplate-tracking-context]');
-        if (!tracker) return;
-        const context = JSON.parse(decodeHtmlEntities(tracker.getAttribute('data-faceplate-tracking-context') || ''));
-        if (!context.comment?.id) return;
+    for (const unit of doc.querySelectorAll('[data-testid="search-sdui-comment-unit"]')) {
+      const tracker = unit.querySelector('search-telemetry-tracker[data-faceplate-tracking-context]');
+      if (!tracker) continue;
+      const ctxStr = tracker.getAttribute('data-faceplate-tracking-context') || '';
+      let context;
+      try { context = JSON.parse(decodeHtmlEntities(ctxStr)); } catch (err) { continue; }
+      if (!context.comment?.id) continue;
 
-        const commentId = context.comment.id;
-        const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector(".i18n-search-comment-content");
-        const body = contentEl?.textContent?.trim();
-        if (!body) return;
+      const commentId = context.comment.id;
+      const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector(".i18n-search-comment-content");
+      const body = contentEl?.textContent?.trim();
+      if (!body) continue;
 
-        let score = 0;
-        const votesContainer = unit.querySelector("p.text-neutral-content-weak");
-        const voteEl = votesContainer?.querySelector('faceplate-number[number]');
-        if (voteEl) score = parseInt(voteEl.getAttribute('number'), 10) || 0;
+      let score = 0;
+      const votesContainer = unit.querySelector("p.text-neutral-content-weak");
+      const voteEl = votesContainer?.querySelector('faceplate-number[number]');
+      if (voteEl) score = parseInt(voteEl.getAttribute('number'), 10) || 0;
 
-        let created_utc = Date.now() / 1000;
-        const timeEls = Array.from(unit.querySelectorAll("faceplate-timeago[ts]"));
-        const timeEl = timeEls.length ? timeEls[timeEls.length - 1] : null;
-        if (timeEl?.getAttribute('ts')) created_utc = new Date(timeEl.getAttribute('ts')).getTime() / 1000;
+      let created_utc = Date.now() / 1000;
+      const timeEls = Array.from(unit.querySelectorAll("faceplate-timeago[ts]"));
+      const timeEl = timeEls.length ? timeEls[timeEls.length - 1] : null;
+      if (timeEl?.getAttribute('ts')) created_utc = new Date(timeEl.getAttribute('ts')).getTime() / 1000;
 
-        const postIdClean = (context.post?.id || '').replace('t3_', '');
-        const commentIdClean = commentId.replace('t1_', '');
-        const subreddit = context.subreddit?.name || '';
+      const postIdClean = (context.post?.id || '').replace('t3_', '');
+      const commentIdClean = commentId.replace('t1_', '');
+      const subreddit = context.subreddit?.name || '';
 
-        comments.push({
-          id: commentId, body, score, subreddit,
-          post_title: context.post?.title || '',
-          permalink: `/r/${subreddit}/comments/${postIdClean}/comment/${commentIdClean}/`,
-          created_utc
-        });
-      } catch (err) { }
-    });
+      comments.push({
+        id: commentId, body, score, subreddit,
+        post_title: context.post?.title || '',
+        permalink: `/r/${subreddit}/comments/${postIdClean}/comment/${commentIdClean}/`,
+        created_utc
+      });
+    }
     return comments;
   }
 
@@ -230,25 +230,25 @@
     if (!postUnits.length) postUnits = doc.querySelectorAll('search-telemetry-tracker[view-events*="search/view/post"]');
 
     if (!postUnits.length) {
-      doc.querySelectorAll('[data-faceplate-tracking-context]').forEach(tracker => {
-        try {
-          const context = JSON.parse(decodeHtmlEntities(tracker.getAttribute('data-faceplate-tracking-context') || ''));
-          const parentContainer = tracker.closest('[data-testid]') || tracker.parentElement?.parentElement;
-          const post = extractPost(context, parentContainer);
-          if (post) posts.push(post);
-        } catch (err) { }
-      });
+      for (const tracker of doc.querySelectorAll('[data-faceplate-tracking-context]')) {
+        const ctxStr = tracker.getAttribute('data-faceplate-tracking-context') || '';
+        let context;
+        try { context = JSON.parse(decodeHtmlEntities(ctxStr)); } catch (err) { continue; }
+        const parentContainer = tracker.closest('[data-testid]') || tracker.parentElement?.parentElement;
+        const post = extractPost(context, parentContainer);
+        if (post) posts.push(post);
+      }
       return posts;
     }
 
-    postUnits.forEach(unit => {
-      try {
-        const tracker = unit.querySelector('[data-faceplate-tracking-context]') || unit;
-        const context = JSON.parse(decodeHtmlEntities(tracker.getAttribute('data-faceplate-tracking-context') || ''));
-        const post = extractPost(context, unit);
-        if (post) posts.push(post);
-      } catch (err) { }
-    });
+    for (const unit of postUnits) {
+      const tracker = unit.querySelector('[data-faceplate-tracking-context]') || unit;
+      const ctxStr = tracker.getAttribute('data-faceplate-tracking-context') || '';
+      let context;
+      try { context = JSON.parse(decodeHtmlEntities(ctxStr)); } catch (err) { continue; }
+      const post = extractPost(context, unit);
+      if (post) posts.push(post);
+    }
     return posts;
   }
 
@@ -398,21 +398,13 @@
   }
 
   function injectProfileData(username, posts, comments, stats, postsUrl, commentsUrl, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried = new Set()) {
-    const allElements = document.querySelectorAll('*');
-    for (const el of allElements) {
-      if (el.textContent.includes("likes to keep their posts hidden") && el.children.length < 10) { el.remove(); break; }
+    let targetDiv = null;
+    const preferredXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div";
+    if (document.evaluate) {
+      const res = document.evaluate(preferredXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (res && res.singleNodeValue && res.singleNodeValue.nodeType === 1) targetDiv = res.singleNodeValue;
     }
-
-    let targetDiv = document.querySelector("div[rpl].flex.flex-col.items-center.w-full") ||
-      document.querySelector("shreddit-profile-overview") ||
-      document.querySelector("main") ||
-      document.querySelector("#main-content");
-
-    if (!targetDiv) {
-      const main = document.querySelector('main');
-      if (main) { targetDiv = document.createElement("div"); main.appendChild(targetDiv); }
-      else return;
-    }
+    if (!targetDiv) return; // Only inject when the exact XPath exists, new method. Should be more stable.
 
     const buttonStyle = "padding: 6px 14px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
     const buttonDisabledStyle = "padding: 6px 14px; background: #343536; color: #818384; border: none; border-radius: 16px; cursor: not-allowed; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
@@ -657,9 +649,35 @@
       feedContainer.appendChild(fragment);
     }
 
-    targetDiv.textContent = "";
-    targetDiv.appendChild(controlBar);
-    targetDiv.appendChild(feedContainer);
+    let contentHost = targetDiv.querySelector('#rpu-content');
+    if (!contentHost) {
+      contentHost = document.createElement('div');
+      contentHost.id = 'rpu-content';
+      targetDiv.appendChild(contentHost);
+    }
+    contentHost.textContent = "";
+    contentHost.appendChild(controlBar);
+    contentHost.appendChild(feedContainer);
+
+    const privateBlockXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]";
+    if (document.evaluate) {
+      const r = document.evaluate(privateBlockXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (r && r.singleNodeValue && r.singleNodeValue.nodeType === 1) r.singleNodeValue.remove();
+    }
+
+    document.getElementById('rpu-status')?.remove();
+
+    const childXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]/div";
+    if (document.evaluate) {
+      const c = document.evaluate(childXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (c && c.singleNodeValue && c.singleNodeValue.nodeType === 1) c.singleNodeValue.remove();
+    }
+
+    const buttonsXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[3]";
+    if (document.evaluate) {
+      const b = document.evaluate(buttonsXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (b && b.singleNodeValue && b.singleNodeValue.nodeType === 1) b.singleNodeValue.remove();
+    }
   }
 
   async function main() {
