@@ -25,6 +25,11 @@
     return "overview";
   }
 
+  function isMobileSite() {
+    const device = document.documentElement?.getAttribute('device');
+    return !!device && device.toLowerCase() === 'mobile';
+  }
+
   function isProfilePrivate() {
     if (document.querySelector('img[src*="snoo_wave.png"]')) return true;
     return document.body.innerHTML.includes("snoo_wave.png");
@@ -399,12 +404,30 @@
 
   function injectProfileData(username, posts, comments, stats, postsUrl, commentsUrl, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried = new Set()) {
     let targetDiv = null;
-    const preferredXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div";
-    if (document.evaluate) {
-      const res = document.evaluate(preferredXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-      if (res && res.singleNodeValue && res.singleNodeValue.nodeType === 1) targetDiv = res.singleNodeValue;
+    const DESKTOP_PREFERRED_XPATH = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div";
+
+    window.rpuIsMobile = isMobileSite();
+    try {
+      const r = document.evaluate(DESKTOP_PREFERRED_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (r && r.singleNodeValue && r.singleNodeValue.nodeType === 1) targetDiv = r.singleNodeValue;
+    } catch (e) {}
+
+    if (!targetDiv) {
+      const fallbacks = [
+        'div[data-testid="profile-main"]', 
+        '#main-content',
+        'main',
+        'shreddit-app'
+      ];
+      for (const sel of fallbacks) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        if (sel === 'main') targetDiv = el.querySelector('div[data-testid="profile-main"]') || el;
+        else targetDiv = el;
+        break;
+      }
     }
-    if (!targetDiv) return; // Only inject when the exact XPath exists, new method. Should be more stable.
+    if (!targetDiv) return;
 
     const buttonStyle = "padding: 6px 14px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
     const buttonDisabledStyle = "padding: 6px 14px; background: #343536; color: #818384; border: none; border-radius: 16px; cursor: not-allowed; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
@@ -649,34 +672,54 @@
       feedContainer.appendChild(fragment);
     }
 
-    let contentHost = targetDiv.querySelector('#rpu-content');
-    if (!contentHost) {
-      contentHost = document.createElement('div');
-      contentHost.id = 'rpu-content';
-      targetDiv.appendChild(contentHost);
-    }
-    contentHost.textContent = "";
+    document.getElementById('rpu-status')?.remove();
+    const prev = document.querySelector('#rpu-content');
+    if (prev) prev.remove();
+
+    const tabEl = document.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
+    let contentHost = document.createElement('div');
+    contentHost.id = 'rpu-content';
     contentHost.appendChild(controlBar);
     contentHost.appendChild(feedContainer);
 
-    const privateBlockXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]";
-    if (document.evaluate) {
-      const r = document.evaluate(privateBlockXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-      if (r && r.singleNodeValue && r.singleNodeValue.nodeType === 1) r.singleNodeValue.remove();
+    if (tabEl) {
+      const tabContainer = tabEl.closest('div') || tabEl.parentElement;
+      if (tabContainer && tabContainer.parentNode) {
+        tabContainer.parentNode.insertBefore(contentHost, tabContainer.nextSibling);
+      } else {
+        targetDiv.appendChild(contentHost);
+      }
+    } else {
+      targetDiv.appendChild(contentHost);
     }
 
-    document.getElementById('rpu-status')?.remove();
+    try {
+      const r = document.evaluate("/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (r?.singleNodeValue && !r.singleNodeValue.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]')) r.singleNodeValue.remove();
+    } catch (e) {}
 
-    const childXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]/div";
-    if (document.evaluate) {
-      const c = document.evaluate(childXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-      if (c && c.singleNodeValue && c.singleNodeValue.nodeType === 1) c.singleNodeValue.remove();
+    const snooImgs = Array.from(document.querySelectorAll('img[src*="snoo_wave.png"]'));
+    for (const snooImg of snooImgs) {
+      let cand = snooImg.closest('div') || snooImg.parentElement, removed = false;
+      for (let i = 0; i < 8 && cand; i++) {
+        const txt = (cand.textContent || '').trim();
+        const hasWelcome = txt.includes('Welcome!') || /welcome/i.test(txt);
+        const hasHidden = txt.includes('likes to keep their posts hidden') || /likes to keep/i.test(txt);
+        const containsTab = !!cand.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
+        const isAncestorOfTab = tabEl && cand.contains(tabEl);
+        if ((hasWelcome || hasHidden || cand.querySelector('img[src*="snoo_wave.png"]')) && !containsTab && !isAncestorOfTab) { cand.remove(); removed = true; if (DEBUG) console.log('[MrPa] removed', cand); break; }
+        if (containsTab || isAncestorOfTab) break;
+        cand = cand.parentElement;
+      }
+      if (removed) break;
     }
 
-    const buttonsXPath = "/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[3]";
-    if (document.evaluate) {
-      const b = document.evaluate(buttonsXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-      if (b && b.singleNodeValue && b.singleNodeValue.nodeType === 1) b.singleNodeValue.remove();
+    const allDivs = targetDiv.querySelectorAll('div');
+    for (const d of allDivs) {
+      const txt = (d.textContent || '').trim(); if (!txt) continue;
+      const containsTab = !!d.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
+      const isAncestorOfTab = tabEl && d.contains(tabEl);
+      if ((txt.includes('likes to keep their posts hidden') || /likes to keep/i.test(txt)) && !containsTab && !isAncestorOfTab) { d.remove(); if (DEBUG) console.log('[MrPa] removed hidden div', d); break; }
     }
   }
 

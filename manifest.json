@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Make Reddit Profiles Public Again",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Automatically fills in private Reddit user profiles with data from Reddit search",
   "permissions": [],
   "host_permissions": [
