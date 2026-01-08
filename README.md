@@ -12,7 +12,10 @@ MrPa uses Reddit's own search pages to fetch a user's recent posts and comments 
 - A change in Reddit's page structure could break the extension temporaly.
 
 ## Installation
-- The extension is not yet avabile in the Chrome Web Store or Firefox Add-ons. For now you can install it manually as an unpacked extension.
+- On chrome just install it from the Chrome Webstore
+- https://chromewebstore.google.com/detail/make-reddit-profiles-publ/omeekklkkanmadacloahobkakdclmdip
+
+- The extension is not yet avabile in the Firefox Add-ons. For now you can install it manually as an unpacked extension.
 - Clone or download this repository.
 - In Chrome/Edge: Go to `chrome://extensions/`, enable "Developer mode", click "Load unpacked", and select the folder where you downloaded the repo.
 - In Firefox: Go to `about:debugging#/runtime/this-firefox`, click "Load Temporary Add-on", and select the manifest.json file in the downloaded repo folder.
