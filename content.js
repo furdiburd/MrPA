@@ -10,8 +10,11 @@
   const LOAD_MORE_DELAY = 200;
   const CACHE_DURATION = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "rpu_cache_";
+  
   let loadingInterval = null;
   let loadingProgress = { comments: 0, posts: 0 };
+  let isProcessing = false;
+  let activeUrl = location.href;
 
   function getUsername() {
     const match = window.location.pathname.match(/\/(?:user|u)\/([^\/]+)/);
@@ -263,6 +266,8 @@
     let nextPageUrl = null, currentUrl = searchUrl;
 
     while (currentUrl && allPosts.length < limit) {
+      if (location.href !== activeUrl) break;
+      
       const doc = await fetchSearchPage(currentUrl);
       if (!doc) break;
 
@@ -298,6 +303,8 @@
     let nextPageUrl = null, currentUrl = searchUrl;
 
     while (currentUrl && allComments.length < limit) {
+      if (location.href !== activeUrl) break;
+
       const doc = await fetchSearchPage(currentUrl);
       if (!doc) break;
 
@@ -413,12 +420,7 @@
     } catch (e) {}
 
     if (!targetDiv) {
-      const fallbacks = [
-        'div[data-testid="profile-main"]', 
-        '#main-content',
-        'main',
-        'shreddit-app'
-      ];
+      const fallbacks = ['div[data-testid="profile-main"]', '#main-content', 'main', 'shreddit-app'];
       for (const sel of fallbacks) {
         const el = document.querySelector(sel);
         if (!el) continue;
@@ -429,8 +431,17 @@
     }
     if (!targetDiv) return;
 
-    const buttonStyle = "padding: 6px 14px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
-    const buttonDisabledStyle = "padding: 6px 14px; background: #343536; color: #818384; border: none; border-radius: 16px; cursor: not-allowed; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
+    // I just realised i had the extension installed twice on mobile... Ouch. I need to clean this up
+    const existingInstances = document.querySelectorAll('#rpu-content');
+    if (existingInstances.length > 0) {
+       existingInstances.forEach(el => el.remove());
+    }
+
+    const mobileFullWidth = window.rpuIsMobile ? "width: 100%;" : "";
+    const buttonBase = "padding: 6px 14px; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;";
+    const buttonStyle = `${buttonBase} background: #ff4500; color: white; ${mobileFullWidth}`;
+    const buttonDisabledStyle = `${buttonBase} background: #343536; color: #818384; cursor: not-allowed; ${mobileFullWidth}`;
+    
     const sortButtonActive = "padding: 6px 12px; background: #ff4500; color: white; border: none; border-radius: 16px; cursor: pointer; font-weight: 600; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
     const sortButtonInactive = "padding: 6px 12px; background: transparent; color: #818384; border: 1px solid #343536; border-radius: 16px; cursor: pointer; font-weight: 500; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;";
 
@@ -439,8 +450,7 @@
 
     const statsSection = document.createElement("div");
     statsSection.style.cssText = "display: flex; align-items: center; gap: 8px; font-size: 12px; color: #818384;";
-    statsSection.title = "Only the newest ~75 posts and comments are fetched by default";
-
+    
     const postsLink = document.createElement("a");
     postsLink.href = postsUrl;
     postsLink.target = '_blank';
@@ -466,8 +476,16 @@
     statsSection.appendChild(commentsLink);
 
     const controlsSection = document.createElement("div");
-    controlsSection.style.cssText = "display: flex; align-items: center; gap: 8px;";
+    // Responsive layout for mobile vs desktop, no longer break reddit ui on mobile
+    if (window.rpuIsMobile) {
+        controlsSection.style.cssText = "display: flex; flex-direction: column; width: 100%; gap: 8px; margin-top: 4px;";
+    } else {
+        controlsSection.style.cssText = "display: flex; align-items: center; gap: 8px;";
+    }
 
+    const sortContainer = document.createElement("div");
+    sortContainer.style.cssText = "display: flex; gap: 8px; align-items: center;";
+    
     const sortNewBtn = document.createElement("button");
     sortNewBtn.textContent = 'New';
     sortNewBtn.style.cssText = sortButtonActive;
@@ -478,6 +496,10 @@
 
     const separator = document.createElement("span");
     separator.style.cssText = "width: 1px; height: 16px; background: #343536; margin: 0 4px;";
+    
+    sortContainer.appendChild(sortNewBtn);
+    sortContainer.appendChild(sortTopBtn);
+    sortContainer.appendChild(separator);
 
     const loadMorePostsBtn = document.createElement("button");
     loadMorePostsBtn.id = 'rpu-load-more-posts';
@@ -493,15 +515,22 @@
     const anyMoreCommentSorts = COMMENT_SORTS.some(s => !initialCommentSorts.has(s));
     const canContinueComments = !!commentsNextUrl || anyMoreCommentSorts;
 
-    loadMoreCommentsBtn.textContent = canContinueComments ? (commentsNextUrl ? 'Load more comments' : 'Load more comments') : 'No more comments';
+    loadMoreCommentsBtn.textContent = canContinueComments ? 'Load more comments' : 'No more comments';
     loadMoreCommentsBtn.style.cssText = canContinueComments ? buttonStyle : buttonDisabledStyle;
     loadMoreCommentsBtn.disabled = !canContinueComments;
 
-    controlsSection.appendChild(sortNewBtn);
-    controlsSection.appendChild(sortTopBtn);
-    controlsSection.appendChild(separator);
-    controlsSection.appendChild(loadMorePostsBtn);
-    controlsSection.appendChild(loadMoreCommentsBtn);
+    if (window.rpuIsMobile) {
+        controlsSection.appendChild(sortContainer);
+        controlsSection.appendChild(loadMorePostsBtn);
+        controlsSection.appendChild(loadMoreCommentsBtn);
+        separator.style.display = 'none';
+    } else {
+        controlsSection.appendChild(sortNewBtn);
+        controlsSection.appendChild(sortTopBtn);
+        controlsSection.appendChild(separator);
+        controlsSection.appendChild(loadMorePostsBtn);
+        controlsSection.appendChild(loadMoreCommentsBtn);
+    }
 
     controlBar.appendChild(statsSection);
     controlBar.appendChild(controlsSection);
@@ -628,7 +657,7 @@
         loadMoreCommentsBtn.disabled = !canContinue;
         loadMoreCommentsBtn.style.cssText = canContinue ? buttonStyle : buttonDisabledStyle;
       } catch (err) {
-        console.error('[Reddit Profile Unveiler] Failed loading more comments', err);
+        console.error('[MrPa] Failed loading more comments', err);
         loadMoreCommentsBtn.textContent = "Error - try again";
         loadMoreCommentsBtn.disabled = false;
         loadMoreCommentsBtn.style.cssText = buttonStyle;
@@ -673,8 +702,7 @@
     }
 
     document.getElementById('rpu-status')?.remove();
-    const prev = document.querySelector('#rpu-content');
-    if (prev) prev.remove();
+    document.querySelectorAll('#rpu-content').forEach(e => e.remove());
 
     const tabEl = document.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
     let contentHost = document.createElement('div');
@@ -697,6 +725,16 @@
       const r = document.evaluate("/html/body/shreddit-app/div[1]/div[1]/div/main/div/div[4]/div/div[1]", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
       if (r?.singleNodeValue && !r.singleNodeValue.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]')) r.singleNodeValue.remove();
     } catch (e) {}
+    
+    const elementsToRemove = [
+      'faceplate-partial[src*="feed_options"]',
+      'shreddit-sort-dropdown',
+      '[id*="feed-options"]',
+      'div.flex.items-center.gap-xs.my-md.mx-xs.overflow-hidden',
+      'div[rpl].flex.flex-col.items-center.w-full', // The "Welcome!" container
+      'div.flex.flex-col.w-full.items-center.box-border.px-md.gap-md.pb-md'
+    ];
+    document.querySelectorAll(elementsToRemove.join(', ')).forEach(el => el.remove());
 
     const snooImgs = Array.from(document.querySelectorAll('img[src*="snoo_wave.png"]'));
     for (const snooImg of snooImgs) {
@@ -707,97 +745,102 @@
         const hasHidden = txt.includes('likes to keep their posts hidden') || /likes to keep/i.test(txt);
         const containsTab = !!cand.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
         const isAncestorOfTab = tabEl && cand.contains(tabEl);
-        if ((hasWelcome || hasHidden || cand.querySelector('img[src*="snoo_wave.png"]')) && !containsTab && !isAncestorOfTab) { cand.remove(); removed = true; if (DEBUG) console.log('[MrPa] removed', cand); break; }
+        if ((hasWelcome || hasHidden || cand.querySelector('img[src*="snoo_wave.png"]')) && !containsTab && !isAncestorOfTab) { cand.remove(); removed = true; break; }
         if (containsTab || isAncestorOfTab) break;
         cand = cand.parentElement;
       }
       if (removed) break;
     }
-
-    const allDivs = targetDiv.querySelectorAll('div');
-    for (const d of allDivs) {
-      const txt = (d.textContent || '').trim(); if (!txt) continue;
-      const containsTab = !!d.querySelector('#profile-feed-tabgroup, faceplate-tabgroup, [id*="profile-feed"]');
-      const isAncestorOfTab = tabEl && d.contains(tabEl);
-      if ((txt.includes('likes to keep their posts hidden') || /likes to keep/i.test(txt)) && !containsTab && !isAncestorOfTab) { d.remove(); if (DEBUG) console.log('[MrPa] removed hidden div', d); break; }
-    }
   }
 
   async function main() {
-    const username = getUsername();
-    if (!username) return;
+    if (isProcessing) return;
+    isProcessing = true;
+    activeUrl = location.href;
 
-    const subpage = getSubpageType();
-    let attempts = 0;
-    while (attempts < 2) {
-      await new Promise(r => setTimeout(r, 500));
-      if (isProfilePrivate()) break;
-      attempts++;
-    }
+    try {
+      const username = getUsername();
+      if (!username) return;
 
-    if (!isProfilePrivate()) return;
-
-    const cachedData = getCachedData(username);
-    let posts = [], comments = [];
-    let postsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=posts&sort=new`;
-    let commentsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=new`;
-    let postsNextUrl = null, commentsNextUrl = null;
-    let postsSeenIds = new Set(), commentsSeenIds = new Set();
-
-    if (cachedData) {
-      posts = cachedData.posts || [];
-      comments = cachedData.comments || [];
-      postsNextUrl = cachedData.postsNextUrl;
-      commentsNextUrl = cachedData.commentsNextUrl;
-      postsSeenIds = new Set(cachedData.postsSeenIds || []);
-      commentsSeenIds = new Set(cachedData.commentsSeenIds || []);
-      var commentSortsTried = new Set(cachedData.commentSortsTried || ["new"]);
-
-      const needPosts = (subpage === 'overview' || subpage === 'posts') && posts.length === 0;
-      const needComments = (subpage === 'overview' || subpage === 'comments') && comments.length === 0;
-
-      if (needPosts || needComments) {
-        const loadingIndicator = startLoadingIndicator();
-        if (needPosts) {
-          const r = await fetchUserPosts(username);
-          posts = r.posts; postsNextUrl = r.nextPageUrl; postsSeenIds = r.seenIds;
-        }
-        if (needComments) {
-          const r = await fetchUserComments(username);
-          comments = r.comments; commentsNextUrl = r.nextPageUrl; commentsSeenIds = r.seenIds;
-        }
-        if (loadingIndicator) loadingIndicator.stop();
-        setCachedData(username, posts, comments, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
+      const subpage = getSubpageType();
+      let attempts = 0;
+      while (attempts < 2) {
+        await new Promise(r => setTimeout(r, 500));
+        if (location.href !== activeUrl) return; 
+        if (isProfilePrivate()) break;
+        attempts++;
       }
-    } else {
-      const loadingIndicator = startLoadingIndicator();
-      const fetchPosts = subpage === 'overview' || subpage === 'posts';
-      const fetchComments = subpage === 'overview' || subpage === 'comments';
+
+      if (!isProfilePrivate()) return;
+
+      const cachedData = getCachedData(username);
+      let posts = [], comments = [];
+      let postsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=posts&sort=new`;
+      let commentsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=new`;
+      let postsNextUrl = null, commentsNextUrl = null;
+      let postsSeenIds = new Set(), commentsSeenIds = new Set();
       var commentSortsTried = new Set(["new"]);
 
-      const [postsResult, commentsResult] = await Promise.all([
-        fetchPosts ? fetchUserPosts(username) : Promise.resolve({ posts: [], nextPageUrl: null, seenIds: new Set() }),
-        fetchComments ? fetchUserComments(username) : Promise.resolve({ comments: [], nextPageUrl: null, seenIds: new Set() })
-      ]);
+      if (cachedData) {
+        posts = cachedData.posts || [];
+        comments = cachedData.comments || [];
+        postsNextUrl = cachedData.postsNextUrl;
+        commentsNextUrl = cachedData.commentsNextUrl;
+        postsSeenIds = new Set(cachedData.postsSeenIds || []);
+        commentsSeenIds = new Set(cachedData.commentsSeenIds || []);
+        commentSortsTried = new Set(cachedData.commentSortsTried || ["new"]);
 
-      if (loadingIndicator) loadingIndicator.stop();
-      posts = postsResult.posts || [];
-      comments = commentsResult.comments || [];
-      postsUrl = postsResult.url || postsUrl;
-      commentsUrl = commentsResult.url || commentsUrl;
-      postsNextUrl = postsResult.nextPageUrl;
-      commentsNextUrl = commentsResult.nextPageUrl;
-      postsSeenIds = postsResult.seenIds || new Set();
-      commentsSeenIds = commentsResult.seenIds || new Set();
-      setCachedData(username, posts, comments, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
+        const needPosts = (subpage === 'overview' || subpage === 'posts') && posts.length === 0;
+        const needComments = (subpage === 'overview' || subpage === 'comments') && comments.length === 0;
+
+        if (needPosts || needComments) {
+          const loadingIndicator = startLoadingIndicator();
+          if (needPosts) {
+            const r = await fetchUserPosts(username);
+            posts = r.posts; postsNextUrl = r.nextPageUrl; postsSeenIds = r.seenIds;
+          }
+          if (needComments) {
+            const r = await fetchUserComments(username);
+            comments = r.comments; commentsNextUrl = r.nextPageUrl; commentsSeenIds = r.seenIds;
+          }
+          if (loadingIndicator) loadingIndicator.stop();
+          setCachedData(username, posts, comments, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
+        }
+      } else {
+        const loadingIndicator = startLoadingIndicator();
+        const fetchPosts = subpage === 'overview' || subpage === 'posts';
+        const fetchComments = subpage === 'overview' || subpage === 'comments';
+
+        const [postsResult, commentsResult] = await Promise.all([
+          fetchPosts ? fetchUserPosts(username) : Promise.resolve({ posts: [], nextPageUrl: null, seenIds: new Set() }),
+          fetchComments ? fetchUserComments(username) : Promise.resolve({ comments: [], nextPageUrl: null, seenIds: new Set() })
+        ]);
+
+        if (loadingIndicator) loadingIndicator.stop();
+        if (location.href !== activeUrl) return;
+
+        posts = postsResult.posts || [];
+        comments = commentsResult.comments || [];
+        postsUrl = postsResult.url || postsUrl;
+        commentsUrl = commentsResult.url || commentsUrl;
+        postsNextUrl = postsResult.nextPageUrl;
+        commentsNextUrl = commentsResult.nextPageUrl;
+        postsSeenIds = postsResult.seenIds || new Set();
+        commentsSeenIds = commentsResult.seenIds || new Set();
+        setCachedData(username, posts, comments, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
+      }
+
+      if (posts.length === 0 && comments.length === 0) {
+        updateStatusMessage("No data found about user.");
+        return;
+      }
+
+      if (location.href === activeUrl) {
+          injectProfileData(username, posts, comments, calculateStats(posts, comments), postsUrl, commentsUrl, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
+      }
+    } finally {
+      isProcessing = false;
     }
-
-    if (posts.length === 0 && comments.length === 0) {
-      updateStatusMessage("No data found about user.");
-      return;
-    }
-
-    injectProfileData(username, posts, comments, calculateStats(posts, comments), postsUrl, commentsUrl, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);
@@ -805,6 +848,9 @@
 
   let lastUrl = location.href;
   new MutationObserver(() => {
-    if (location.href !== lastUrl) { lastUrl = location.href; setTimeout(main, 500); }
+    if (location.href !== lastUrl) { 
+        lastUrl = location.href; 
+        setTimeout(main, 500); 
+    }
   }).observe(document, { subtree: true, childList: true });
 })();
