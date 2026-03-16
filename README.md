@@ -5,7 +5,8 @@ Don't worry - the solution is here.
 
 MrPa uses Reddit's own search pages to fetch a user's recent posts and comments and injects them into the profile page so you can view contribution history that may be hidden by the profile UI.
 
-- Uses public Reddit search endpoints to gather posts and comments by author.
+- Uses Reddit search endpoints (including `/svc/shreddit/search/`) to gather posts and comments by username.
+- Filters results to the exact profile username so off-target search hits are excluded, with a byline-text fallback when Reddit omits structured author metadata.
 - Injects a compact feed into the profile page (posts/comments, scores, timestamps; everything that Reddit shows normally).
 - Caches results in sessionStorage for a short time (10 minutes) to reduce requests.
 ### Please report any issues or suggestions in the GitHub repo issue tracker. 

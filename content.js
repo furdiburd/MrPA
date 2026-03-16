@@ -10,6 +10,8 @@
   const LOAD_MORE_DELAY = 200;
   const CACHE_DURATION = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "rpu_cache_";
+  const SEARCH_PAGE_BASE_URL = "https://www.reddit.com/search/";
+  const SHREDDIT_SEARCH_BASE_URL = "https://www.reddit.com/svc/shreddit/search/";
   
   let loadingInterval = null;
   let loadingProgress = { comments: 0, posts: 0 };
@@ -127,8 +129,157 @@
     return null;
   }
 
+  function normalizeSearchType(type) {
+    return type === "posts" ? "posts" : "comments";
+  }
+
+  function buildShredditSearchUrl(username, type = "comments", sort = "new") {
+    const url = new URL(SHREDDIT_SEARCH_BASE_URL);
+    url.searchParams.set("q", username);
+    url.searchParams.set("type", normalizeSearchType(type));
+    url.searchParams.set("sort", sort);
+    return url.toString();
+  }
+
+  function buildSearchPageUrl(username, type = "comments", sort = "new") {
+    const url = new URL(SEARCH_PAGE_BASE_URL);
+    url.searchParams.set("q", username);
+    url.searchParams.set("type", normalizeSearchType(type));
+    url.searchParams.set("sort", sort);
+    return url.toString();
+  }
+
   function decodeHtmlEntities(str) {
     return str.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+  }
+
+  function normalizeUsername(username) {
+    if (!username) return "";
+    return String(username)
+      .trim()
+      .replace(/^\/?(?:u|user)\//i, "")
+      .replace(/^@/, "")
+      .toLowerCase();
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function extractUsernameFromHref(href) {
+    if (!href) return "";
+    const match = href.match(/(?:reddit\.com)?\/(?:user|u)\/([^\/?#]+)/i);
+    return match ? normalizeUsername(decodeURIComponent(match[1])) : "";
+  }
+
+  function getStringAuthorCandidates(value, out) {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      for (const item of value) getStringAuthorCandidates(item, out);
+      return;
+    }
+    if (typeof value === "object") {
+      for (const nested of Object.values(value)) getStringAuthorCandidates(nested, out);
+      return;
+    }
+    if (typeof value !== "string") return;
+
+    const normalized = normalizeUsername(value);
+    if (normalized && !normalized.includes(" ")) out.add(normalized);
+
+    const extracted = extractUsernameFromHref(value);
+    if (extracted) out.add(extracted);
+  }
+
+  function collectContextAuthorCandidates(value, out, depth = 0) {
+    if (depth > 6 || value == null) return;
+
+    if (Array.isArray(value)) {
+      for (const item of value) collectContextAuthorCandidates(item, out, depth + 1);
+      return;
+    }
+
+    if (typeof value !== "object") return;
+
+    for (const [key, nested] of Object.entries(value)) {
+      const lowerKey = key.toLowerCase();
+      if (typeof nested === "string" && (lowerKey.includes("author") || lowerKey.includes("user") || lowerKey.includes("username"))) {
+        getStringAuthorCandidates(nested, out);
+      }
+      collectContextAuthorCandidates(nested, out, depth + 1);
+    }
+  }
+
+  function getAuthorCandidates(context, unitEl = null) {
+    const candidates = new Set();
+    getStringAuthorCandidates(context?.author, candidates);
+    getStringAuthorCandidates(context?.authorName, candidates);
+    getStringAuthorCandidates(context?.user, candidates);
+    getStringAuthorCandidates(context?.comment?.author, candidates);
+    getStringAuthorCandidates(context?.comment?.authorName, candidates);
+    getStringAuthorCandidates(context?.post?.author, candidates);
+    getStringAuthorCandidates(context?.post?.authorName, candidates);
+    collectContextAuthorCandidates(context, candidates);
+
+    if (unitEl) {
+      const authorEl = unitEl.querySelector('a[data-testid*="author" i][href], [data-testid*="author" i] a[href], a[href*="/user/"], a[href*="/u/"]');
+      const hrefUser = extractUsernameFromHref(authorEl?.getAttribute('href') || authorEl?.href || "");
+      if (hrefUser) candidates.add(hrefUser);
+    }
+
+    return candidates;
+  }
+
+  function hasBylineAuthorSignal(unitEl, expectedUsername) {
+    const expected = normalizeUsername(expectedUsername);
+    if (!expected || !unitEl) return false;
+
+    const compactText = (unitEl.textContent || "").replace(/\s+/g, " ").toLowerCase();
+    if (!compactText) return false;
+
+    const escapedExpected = escapeRegExp(expected);
+    const commentLikeByline = new RegExp(`(^|\\s)${escapedExpected}\\s*·\\s*`, "i");
+    const postLikeByline = new RegExp(`·\\s*${escapedExpected}\\s*·`, "i");
+
+    return commentLikeByline.test(compactText) || postLikeByline.test(compactText);
+  }
+
+  function isAuthorMatch(context, unitEl, expectedUsername) {
+    const expected = normalizeUsername(expectedUsername);
+    if (!expected) return true;
+
+    const candidates = getAuthorCandidates(context, unitEl);
+    if (candidates.has(expected)) return true;
+    if (candidates.size > 0) return false;
+    return hasBylineAuthorSignal(unitEl, expected);
+  }
+
+  function getCanonicalAuthor(context, unitEl, expectedUsername) {
+    const expected = normalizeUsername(expectedUsername);
+    const candidates = getAuthorCandidates(context, unitEl);
+    if (expected && (candidates.has(expected) || hasBylineAuthorSignal(unitEl, expected))) return expected;
+    return candidates.values().next().value || "";
+  }
+
+  function toVerifiedCacheItem(item, expectedUsername) {
+    const expected = normalizeUsername(expectedUsername);
+    if (!expected || !item || typeof item !== "object") return null;
+
+    const itemAuthor = normalizeUsername(item.author || "");
+    if (itemAuthor && itemAuthor !== expected) return null;
+
+    return {
+      ...item,
+      author: expected
+    };
+  }
+
+  function isCacheItemAuthorMatch(item, expectedUsername) {
+    const expected = normalizeUsername(expectedUsername);
+    if (!expected || !item || typeof item !== "object") return false;
+    const itemAuthor = normalizeUsername(item.author || "");
+    if (!itemAuthor) return true;
+    return itemAuthor === expected;
   }
 
   function getCachedData(username) {
@@ -167,7 +318,7 @@
       window.rpuState.commentSortsTried || []);
   }
 
-  function extractCommentsFromSearchHTML(doc) {
+  function extractCommentsFromSearchHTML(doc, expectedUsername = "") {
     const comments = [];
     for (const unit of doc.querySelectorAll('[data-testid="search-sdui-comment-unit"]')) {
       const tracker = unit.querySelector('search-telemetry-tracker[data-faceplate-tracking-context]');
@@ -176,6 +327,7 @@
       let context;
       try { context = JSON.parse(decodeHtmlEntities(ctxStr)); } catch (err) { continue; }
       if (!context.comment?.id) continue;
+      if (!isAuthorMatch(context, unit, expectedUsername)) continue;
 
       const commentId = context.comment.id;
       const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector(".i18n-search-comment-content");
@@ -195,9 +347,10 @@
       const postIdClean = (context.post?.id || '').replace('t3_', '');
       const commentIdClean = commentId.replace('t1_', '');
       const subreddit = context.subreddit?.name || '';
+      const author = getCanonicalAuthor(context, unit, expectedUsername);
 
       comments.push({
-        id: commentId, body, score, subreddit,
+        id: commentId, body, score, subreddit, author,
         post_title: context.post?.title || '',
         permalink: `/r/${subreddit}/comments/${postIdClean}/comment/${commentIdClean}/`,
         created_utc
@@ -206,15 +359,16 @@
     return comments;
   }
 
-  function extractPostsFromSearchHTML(doc) {
+  function extractPostsFromSearchHTML(doc, expectedUsername = "") {
     const posts = [];
     const seenIds = new Set();
 
     const extractPost = (context, parentContainer) => {
       if (!context.post?.id || !context.post?.title || context.comment) return null;
+      if (!isAuthorMatch(context, parentContainer, expectedUsername)) return null;
+
       const postId = context.post.id;
       if (seenIds.has(postId)) return null;
-      seenIds.add(postId);
 
       let score = 0;
       const counterRow = parentContainer?.querySelector('[data-testid="search-counter-row"]');
@@ -226,8 +380,11 @@
       if (timeEl?.getAttribute('ts')) created_utc = new Date(timeEl.getAttribute('ts')).getTime() / 1000;
 
       const subreddit = context.subreddit?.name || '';
+      const author = getCanonicalAuthor(context, parentContainer, expectedUsername);
+
+      seenIds.add(postId);
       return {
-        id: postId, title: context.post.title, score, subreddit,
+        id: postId, title: context.post.title, score, subreddit, author,
         permalink: `/r/${subreddit}/comments/${postId.replace('t3_', '')}/`,
         created_utc, nsfw: context.post?.nsfw || false
       };
@@ -271,7 +428,7 @@
       const doc = await fetchSearchPage(currentUrl);
       if (!doc) break;
 
-      for (const post of extractPostsFromSearchHTML(doc)) {
+      for (const post of extractPostsFromSearchHTML(doc, username)) {
         if (!seenIds.has(post.id)) { seenIds.add(post.id); allPosts.push(post); }
       }
       updateLoadingProgress('posts', allPosts.length);
@@ -286,7 +443,7 @@
     const allPosts = [...existingPosts];
     const seenIds = new Set(existingSeenIds);
     let lastNextPageUrl = null;
-    const baseSearchUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=posts&sort=new`;
+    const baseSearchUrl = buildShredditSearchUrl(username, "posts", "new");
 
     if (startUrl) return fetchPostsFromUrl(username, startUrl, limit, delay, allPosts, seenIds);
 
@@ -308,7 +465,7 @@
       const doc = await fetchSearchPage(currentUrl);
       if (!doc) break;
 
-      for (const comment of extractCommentsFromSearchHTML(doc)) {
+      for (const comment of extractCommentsFromSearchHTML(doc, username)) {
         if (!seenIds.has(comment.id)) { seenIds.add(comment.id); allComments.push(comment); }
       }
       updateLoadingProgress('comments', allComments.length);
@@ -323,7 +480,7 @@
     const allComments = [...existingComments];
     const seenIds = new Set(existingSeenIds);
     let lastNextPageUrl = null;
-    const baseSearchUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=new`;
+    const baseSearchUrl = buildShredditSearchUrl(username, "comments", "new");
 
     if (startUrl) return fetchCommentsFromUrl(username, startUrl, limit, delay, allComments, seenIds);
 
@@ -638,7 +795,7 @@
         const COMMENT_SORTS = ["new", "relevance", "top"];
         for (const sort of COMMENT_SORTS) {
           if (window.rpuState.commentSortsTried.has(sort)) continue;
-          const altUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=${sort}`;
+          const altUrl = buildShredditSearchUrl(username, "comments", sort);
           const res = await fetchUserComments(username, altUrl, Infinity, LOAD_MORE_DELAY, window.rpuState.comments, window.rpuState.commentsSeenIds);
           window.rpuState.comments = res.comments;
           window.rpuState.commentsSeenIds = res.seenIds;
@@ -775,23 +932,36 @@
 
       const cachedData = getCachedData(username);
       let posts = [], comments = [];
-      let postsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=posts&sort=new`;
-      let commentsUrl = `https://www.reddit.com/search/?q=${encodeURIComponent(`author:${username}`)}&type=comments&sort=new`;
+      let postsUrl = buildSearchPageUrl(username, "posts", "new");
+      let commentsUrl = buildSearchPageUrl(username, "comments", "new");
       let postsNextUrl = null, commentsNextUrl = null;
       let postsSeenIds = new Set(), commentsSeenIds = new Set();
       var commentSortsTried = new Set(["new"]);
 
       if (cachedData) {
-        posts = cachedData.posts || [];
-        comments = cachedData.comments || [];
+        const cachedPosts = Array.isArray(cachedData.posts) ? cachedData.posts : [];
+        const cachedComments = Array.isArray(cachedData.comments) ? cachedData.comments : [];
+
+        posts = cachedPosts
+          .filter(post => isCacheItemAuthorMatch(post, username))
+          .map(post => toVerifiedCacheItem(post, username))
+          .filter(Boolean);
+        comments = cachedComments
+          .filter(comment => isCacheItemAuthorMatch(comment, username))
+          .map(comment => toVerifiedCacheItem(comment, username))
+          .filter(Boolean);
+
+        const hadUnverifiedPosts = cachedPosts.length > 0 && posts.length !== cachedPosts.length;
+        const hadUnverifiedComments = cachedComments.length > 0 && comments.length !== cachedComments.length;
+
         postsNextUrl = cachedData.postsNextUrl;
         commentsNextUrl = cachedData.commentsNextUrl;
-        postsSeenIds = new Set(cachedData.postsSeenIds || []);
-        commentsSeenIds = new Set(cachedData.commentsSeenIds || []);
+        postsSeenIds = new Set(posts.map(post => post.id));
+        commentsSeenIds = new Set(comments.map(comment => comment.id));
         commentSortsTried = new Set(cachedData.commentSortsTried || ["new"]);
 
-        const needPosts = (subpage === 'overview' || subpage === 'posts') && posts.length === 0;
-        const needComments = (subpage === 'overview' || subpage === 'comments') && comments.length === 0;
+        const needPosts = (subpage === 'overview' || subpage === 'posts') && (posts.length === 0 || hadUnverifiedPosts);
+        const needComments = (subpage === 'overview' || subpage === 'comments') && (comments.length === 0 || hadUnverifiedComments);
 
         if (needPosts || needComments) {
           const loadingIndicator = startLoadingIndicator();
@@ -821,8 +991,6 @@
 
         posts = postsResult.posts || [];
         comments = commentsResult.comments || [];
-        postsUrl = postsResult.url || postsUrl;
-        commentsUrl = commentsResult.url || commentsUrl;
         postsNextUrl = postsResult.nextPageUrl;
         commentsNextUrl = commentsResult.nextPageUrl;
         postsSeenIds = postsResult.seenIds || new Set();
