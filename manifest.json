@@ -5,7 +5,8 @@
   "description": "Automatically fills in private Reddit user profiles with data from Reddit search",
   "permissions": [],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "host_permissions": [
     "https://www.reddit.com/*",
