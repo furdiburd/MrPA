@@ -12,11 +12,48 @@
   const CACHE_KEY_PREFIX = "rpu_cache_";
   const SEARCH_PAGE_BASE_URL = "https://www.reddit.com/search/";
   const SHREDDIT_SEARCH_BASE_URL = "https://www.reddit.com/svc/shreddit/search/";
+  const OLD_REDDIT_SEARCH_BASE_URL = "https://old.reddit.com/search/";
   
   let loadingInterval = null;
   let loadingProgress = { comments: 0, posts: 0 };
   let isProcessing = false;
   let activeUrl = location.href;
+
+  function getRuntimeApi() {
+    if (typeof browser !== "undefined" && browser.runtime) return browser.runtime;
+    if (typeof chrome !== "undefined" && chrome.runtime) return chrome.runtime;
+    return null;
+  }
+
+  function backgroundFetch(url) {
+    return new Promise((resolve, reject) => {
+      const runtime = getRuntimeApi();
+      if (!runtime || typeof runtime.sendMessage !== "function") {
+        reject(new Error("runtime messaging unavailable"));
+        return;
+      }
+
+      const payload = { type: "rpu-fetch", url };
+
+      if (runtime === chrome.runtime) {
+        runtime.sendMessage(payload, (response) => {
+          const lastError = chrome.runtime?.lastError;
+          if (lastError) {
+            reject(new Error(lastError.message));
+            return;
+          }
+          if (!response) {
+            reject(new Error("empty background response"));
+            return;
+          }
+          resolve(response);
+        });
+        return;
+      }
+
+      Promise.resolve(runtime.sendMessage(payload)).then(resolve).catch(reject);
+    });
+  }
 
   function getUsername() {
     const match = window.location.pathname.match(/\/(?:user|u)\/([^\/]+)/);
@@ -115,8 +152,15 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return new DOMParser().parseFromString(await response.text(), 'text/html');
     } catch (err) {
-      error("Failed to fetch search page:", err);
-      return null;
+      try {
+        const bgResponse = await backgroundFetch(url);
+        if (!bgResponse?.ok) throw new Error(bgResponse?.error || `HTTP ${bgResponse?.status || 0}`);
+        return new DOMParser().parseFromString(bgResponse.text || "", 'text/html');
+      } catch (bgErr) {
+        error("Failed to fetch search page:", err);
+        error("Background fetch fallback failed:", bgErr);
+        return null;
+      }
     }
   }
 
@@ -126,6 +170,11 @@
       const src = partial.getAttribute('src');
       return src ? (src.startsWith('http') ? src : `https://www.reddit.com${src}`) : null;
     }
+    const oldNextLink = doc.querySelector('span.next-button a[href], a[rel="nofollow next"][href]');
+    if (oldNextLink) {
+      const href = oldNextLink.getAttribute('href');
+      return href ? (href.startsWith('http') ? href : `https://old.reddit.com${href}`) : null;
+    }
     return null;
   }
 
@@ -134,8 +183,10 @@
   }
 
   function buildShredditSearchUrl(username, type = "comments", sort = "new") {
+    const normalized = normalizeUsername(username) || String(username || "").trim();
+    const query = normalizeSearchType(type) === "comments" ? `"${normalized}"` : normalized;
     const url = new URL(SHREDDIT_SEARCH_BASE_URL);
-    url.searchParams.set("q", username);
+    url.searchParams.set("q", query);
     url.searchParams.set("type", normalizeSearchType(type));
     url.searchParams.set("sort", sort);
     return url.toString();
@@ -147,6 +198,26 @@
     url.searchParams.set("type", normalizeSearchType(type));
     url.searchParams.set("sort", sort);
     return url.toString();
+  }
+
+  function buildOldRedditPostsUrl(username, sort = "new") {
+    const normalized = normalizeUsername(username) || String(username || "").trim();
+    const url = new URL(OLD_REDDIT_SEARCH_BASE_URL);
+    url.searchParams.set("q", `author:${normalized}`);
+    url.searchParams.set("include_over_18", "on");
+    url.searchParams.set("sort", sort);
+    return url.toString();
+  }
+
+  function toRedditPermalink(href) {
+    if (!href) return "";
+    try {
+      const url = new URL(href, "https://old.reddit.com");
+      if (!/reddit\.com$/i.test(url.hostname)) return "";
+      return `${url.pathname}${url.search}${url.hash}`;
+    } catch (err) {
+      return "";
+    }
   }
 
   function decodeHtmlEntities(str) {
@@ -417,6 +488,65 @@
     return posts;
   }
 
+  function extractPostsFromOldRedditSearchHTML(doc, expectedUsername = "") {
+    const posts = [];
+    const seenIds = new Set();
+    const expected = normalizeUsername(expectedUsername);
+
+    for (const result of doc.querySelectorAll('.search-result, .search-result-link')) {
+      const titleEl = result.querySelector('a.search-title, a.title');
+      if (!titleEl) continue;
+
+      const commentsLinkEl = result.querySelector('a.search-comments[href*="/comments/"]') || result.querySelector('a[href*="/comments/"]');
+      const permalinkHref = commentsLinkEl?.getAttribute('href') || titleEl.getAttribute('href') || '';
+      const permalink = toRedditPermalink(permalinkHref);
+      const idMatch = permalink.match(/\/comments\/([a-z0-9]+)(?:\/|$)/i);
+      if (!idMatch) continue;
+
+      const id = `t3_${idMatch[1]}`;
+      if (seenIds.has(id)) continue;
+
+      const title = titleEl.textContent?.trim() || '';
+      if (!title) continue;
+
+      const authorEl = result.querySelector('a.search-author[href], a[href*="/user/"], a[href*="/u/"]');
+      let author = extractUsernameFromHref(authorEl?.getAttribute('href') || authorEl?.href || "");
+      if (!author && authorEl) author = normalizeUsername(authorEl.textContent || "");
+      if (!author) author = expected;
+      if (expected && author && author !== expected) continue;
+
+      const subredditEl = result.querySelector('a.search-subreddit-link[href*="/r/"]') || result.querySelector('a[href*="/r/"]');
+      const subredditText = subredditEl?.textContent?.trim() || '';
+      const subreddit = subredditText.replace(/^r\//i, '') || (permalink.match(/\/r\/([^\/]+)\//i)?.[1] || '');
+
+      const scoreText = result.querySelector('.search-score')?.textContent || '';
+      const scoreMatch = scoreText.replace(/,/g, '').match(/-?\d+/);
+      const score = scoreMatch ? parseInt(scoreMatch[0], 10) || 0 : 0;
+
+      let created_utc = Date.now() / 1000;
+      const timeEl = result.querySelector('time[datetime], time[title], time');
+      const rawTime = timeEl?.getAttribute('datetime') || timeEl?.getAttribute('title') || '';
+      if (rawTime) {
+        const parsed = Date.parse(rawTime);
+        if (!Number.isNaN(parsed)) created_utc = parsed / 1000;
+      }
+
+      seenIds.add(id);
+      posts.push({
+        id,
+        title,
+        score,
+        subreddit,
+        author: author || expected,
+        permalink,
+        created_utc,
+        nsfw: result.classList.contains('over18')
+      });
+    }
+
+    return posts;
+  }
+
   async function fetchPostsFromUrl(username, searchUrl, limit, delay, existingPosts, existingSeenIds) {
     const allPosts = [...existingPosts];
     const seenIds = new Set(existingSeenIds);
@@ -428,7 +558,16 @@
       const doc = await fetchSearchPage(currentUrl);
       if (!doc) break;
 
-      for (const post of extractPostsFromSearchHTML(doc, username)) {
+      const primaryPosts = currentUrl.includes("old.reddit.com")
+        ? extractPostsFromOldRedditSearchHTML(doc, username)
+        : extractPostsFromSearchHTML(doc, username);
+      const extractedPosts = primaryPosts.length
+        ? primaryPosts
+        : (currentUrl.includes("old.reddit.com")
+          ? extractPostsFromSearchHTML(doc, username)
+          : extractPostsFromOldRedditSearchHTML(doc, username));
+
+      for (const post of extractedPosts) {
         if (!seenIds.has(post.id)) { seenIds.add(post.id); allPosts.push(post); }
       }
       updateLoadingProgress('posts', allPosts.length);
@@ -443,15 +582,23 @@
     const allPosts = [...existingPosts];
     const seenIds = new Set(existingSeenIds);
     let lastNextPageUrl = null;
-    const baseSearchUrl = buildShredditSearchUrl(username, "posts", "new");
+    const baseSearchUrl = buildOldRedditPostsUrl(username, "new");
+    const fallbackSearchUrl = buildShredditSearchUrl(username, "posts", "new");
 
     if (startUrl) return fetchPostsFromUrl(username, startUrl, limit, delay, allPosts, seenIds);
 
-    const result = await fetchPostsFromUrl(username, baseSearchUrl, limit, delay, allPosts, seenIds);
+    let result = await fetchPostsFromUrl(username, baseSearchUrl, limit, delay, allPosts, seenIds);
+    let selectedUrl = baseSearchUrl;
+
+    if (result.posts.length === 0 && !result.nextPageUrl) {
+      result = await fetchPostsFromUrl(username, fallbackSearchUrl, limit, delay, allPosts, seenIds);
+      selectedUrl = fallbackSearchUrl;
+    }
+
     for (const post of result.posts) { if (!seenIds.has(post.id)) { seenIds.add(post.id); allPosts.push(post); } }
     result.seenIds.forEach(id => seenIds.add(id));
     lastNextPageUrl = result.nextPageUrl;
-    return { posts: allPosts, url: baseSearchUrl, nextPageUrl: lastNextPageUrl, seenIds };
+    return { posts: allPosts, url: selectedUrl, nextPageUrl: lastNextPageUrl, seenIds };
   }
 
   async function fetchCommentsFromUrl(username, searchUrl, limit, delay, existingComments, existingSeenIds) {
@@ -932,7 +1079,7 @@
 
       const cachedData = getCachedData(username);
       let posts = [], comments = [];
-      let postsUrl = buildSearchPageUrl(username, "posts", "new");
+      let postsUrl = buildOldRedditPostsUrl(username, "new");
       let commentsUrl = buildSearchPageUrl(username, "comments", "new");
       let postsNextUrl = null, commentsNextUrl = null;
       let postsSeenIds = new Set(), commentsSeenIds = new Set();
@@ -967,11 +1114,11 @@
           const loadingIndicator = startLoadingIndicator();
           if (needPosts) {
             const r = await fetchUserPosts(username);
-            posts = r.posts; postsNextUrl = r.nextPageUrl; postsSeenIds = r.seenIds;
+            posts = r.posts; postsUrl = r.url || postsUrl; postsNextUrl = r.nextPageUrl; postsSeenIds = r.seenIds;
           }
           if (needComments) {
             const r = await fetchUserComments(username);
-            comments = r.comments; commentsNextUrl = r.nextPageUrl; commentsSeenIds = r.seenIds;
+            comments = r.comments; commentsUrl = r.url || commentsUrl; commentsNextUrl = r.nextPageUrl; commentsSeenIds = r.seenIds;
           }
           if (loadingIndicator) loadingIndicator.stop();
           setCachedData(username, posts, comments, postsNextUrl, commentsNextUrl, postsSeenIds, commentsSeenIds, commentSortsTried);
@@ -991,6 +1138,8 @@
 
         posts = postsResult.posts || [];
         comments = commentsResult.comments || [];
+        postsUrl = postsResult.url || postsUrl;
+        commentsUrl = commentsResult.url || commentsUrl;
         postsNextUrl = postsResult.nextPageUrl;
         commentsNextUrl = commentsResult.nextPageUrl;
         postsSeenIds = postsResult.seenIds || new Set();
