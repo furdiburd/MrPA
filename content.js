@@ -224,6 +224,200 @@
     return str.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
   }
 
+  function normalizeTextSnippet(text, maxLen = 240) {
+    if (!text) return "";
+    const compact = String(text).replace(/\s+/g, " ").trim();
+    if (!compact) return "";
+    return compact.length > maxLen ? `${compact.slice(0, maxLen - 3)}...` : compact;
+  }
+
+  function pickFirstTextSnippet(candidates, title = "") {
+    const normalizedTitle = normalizeTextSnippet(title).toLowerCase();
+    for (const value of candidates) {
+      const snippet = normalizeTextSnippet(value);
+      if (!snippet) continue;
+      if (normalizedTitle && snippet.toLowerCase() === normalizedTitle) continue;
+      if (snippet.length < 15) continue;
+      return snippet;
+    }
+    return "";
+  }
+
+  function sanitizeImageUrl(rawUrl) {
+    if (!rawUrl) return "";
+    const decoded = decodeHtmlEntities(String(rawUrl)).trim();
+    if (!decoded) return "";
+    try {
+      const parsed = new URL(decoded, "https://www.reddit.com");
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      return parsed.toString();
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function sanitizeCommentLinkHref(rawHref) {
+    if (!rawHref) return "";
+    try {
+      const decoded = decodeHtmlEntities(String(rawHref)).trim();
+      const parsed = new URL(decoded, "https://www.reddit.com");
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      return parsed.toString();
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function linkifyPlainText(text, maxLen = 300) {
+    let value = String(text || "");
+    if (value.length > maxLen) value = `${value.substring(0, maxLen)}...`;
+
+    const regex = /(https?:\/\/[^\s]+)/ig;
+    let html = "";
+    let lastIndex = 0;
+
+    for (const match of value.matchAll(regex)) {
+      const index = match.index ?? 0;
+      const matched = match[0] || "";
+      html += escapeHtml(value.slice(lastIndex, index));
+      const href = sanitizeCommentLinkHref(matched);
+      if (href) {
+        html += `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color: #4fbcff; text-decoration: underline;">${escapeHtml(matched)}</a>`;
+      } else {
+        html += escapeHtml(matched);
+      }
+      lastIndex = index + matched.length;
+    }
+
+    html += escapeHtml(value.slice(lastIndex));
+    return html.replace(/\n/g, "<br>");
+  }
+
+  function sanitizeCommentBodyHtml(rawHtml, fallbackText = "") {
+    if (!rawHtml || typeof rawHtml !== "string") return linkifyPlainText(fallbackText);
+
+    const parsed = new DOMParser().parseFromString(`<div>${rawHtml}</div>`, "text/html");
+    const sourceRoot = parsed.body.firstElementChild;
+    if (!sourceRoot) return linkifyPlainText(fallbackText);
+
+    const outputDoc = document.implementation.createHTMLDocument("");
+    const outputRoot = outputDoc.createElement("div");
+    const doubleBreakTags = new Set(["P", "DIV", "UL", "OL", "BLOCKQUOTE", "PRE"]);
+    const singleBreakTags = new Set(["LI"]);
+
+    const sanitizeNode = (node) => {
+       if (node.nodeType === Node.TEXT_NODE) {
+        const rawText = node.textContent || "";
+        const normalized = rawText
+          .replace(/\r/g, "")
+          .replace(/\t/g, " ")
+          .replace(/\u00a0/g, " ")
+          .replace(/^\s+/, "")
+          .replace(/\n[ \t]+/g, "\n");
+        if (!normalized.trim()) return null;
+        return outputDoc.createTextNode(normalized);
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+      const tag = node.tagName.toUpperCase();
+      if (tag === "BR") return outputDoc.createElement("br");
+
+      if (tag === "A") {
+        const label = (node.textContent || "").trim();
+        if (!label) return null;
+        const href = sanitizeCommentLinkHref(node.getAttribute("href") || "");
+        if (!href) return outputDoc.createTextNode(label);
+        const safeLink = outputDoc.createElement("a");
+        safeLink.href = href;
+        safeLink.target = "_blank";
+        safeLink.rel = "noopener noreferrer";
+        safeLink.style.cssText = "color: #4fbcff; text-decoration: underline;";
+        safeLink.textContent = label;
+        return safeLink;
+      }
+
+      const fragment = outputDoc.createDocumentFragment();
+      for (const child of node.childNodes) {
+        const safeChild = sanitizeNode(child);
+        if (safeChild) fragment.appendChild(safeChild);
+      }
+      if (singleBreakTags.has(tag)) {
+        fragment.appendChild(outputDoc.createElement("br"));
+      } else if (doubleBreakTags.has(tag)) {
+        fragment.appendChild(outputDoc.createElement("br"));
+        fragment.appendChild(outputDoc.createElement("br"));
+      }
+      return fragment;
+    };
+
+    for (const child of sourceRoot.childNodes) {
+      const safeChild = sanitizeNode(child);
+      if (safeChild) outputRoot.appendChild(safeChild);
+    }
+
+    const cleaned = outputRoot.innerHTML
+      .replace(/^(?:<br>\s*)+/, "")
+      .replace(/(?:<br>\s*)+$/, "")
+      .trim();
+    return cleaned || linkifyPlainText(fallbackText);
+  }
+
+  function renderCommentBodyHtml(comment) {
+    if (comment?.bodyHtml) return sanitizeCommentBodyHtml(comment.bodyHtml, comment.body || "");
+    return linkifyPlainText(comment?.body || "");
+  }
+
+  function isLikelyPostImage(url) {
+    if (!url) return false;
+    const value = url.toLowerCase();
+    if (value.includes("default") || value.includes("self") || value.includes("spoiler") || value.includes("nsfw")) return false;
+    if (/(i\.redd\.it|preview\.redd\.it|external-preview\.redd\.it|redditmedia\.com|imgur\.com)/i.test(value)) return true;
+    return /\.(jpe?g|png|webp|gif)(?:\?|#|$)/i.test(value);
+  }
+
+  function extractPostPreviewText(postContext, container, title = "") {
+    const contextText = pickFirstTextSnippet([
+      postContext?.selftext,
+      postContext?.selfText,
+      postContext?.body,
+      postContext?.description,
+      postContext?.content,
+      postContext?.text
+    ], title);
+    if (contextText) return contextText;
+
+    if (!container) return "";
+    const snippetEl = container.querySelector(
+      '[id*="search-post-content"], [data-testid*="post-content" i], .search-result-body .md, .search-result-body p, .search-expando .md, .search-expando p'
+    );
+    if (!snippetEl) return "";
+    return pickFirstTextSnippet([snippetEl.textContent || ""], title);
+  }
+
+  function extractPostThumbnailUrl(postContext, container) {
+    const contextCandidates = [
+      postContext?.thumbnail,
+      postContext?.thumbnail?.url,
+      postContext?.preview?.images?.[0]?.source?.url,
+      postContext?.preview?.images?.[0]?.resolutions?.[0]?.url,
+      postContext?.media?.oembed?.thumbnail_url,
+      postContext?.media?.reddit_video?.fallback_url,
+      postContext?.media?.redditVideo?.fallbackUrl
+    ];
+
+    for (const candidate of contextCandidates) {
+      const sanitized = sanitizeImageUrl(candidate);
+      if (isLikelyPostImage(sanitized)) return sanitized;
+    }
+
+    if (!container) return "";
+    const imageEl = container.querySelector(
+      '.search-result-thumbnail img[src], img[src*="i.redd.it"], img[src*="preview.redd.it"], img[src*="redditmedia.com"], img[src*="imgur.com"]'
+    );
+    const fromDom = sanitizeImageUrl(imageEl?.getAttribute("src") || imageEl?.getAttribute("data-src") || "");
+    return isLikelyPostImage(fromDom) ? fromDom : "";
+  }
+
   function normalizeUsername(username) {
     if (!username) return "";
     return String(username)
@@ -404,6 +598,7 @@
       const contentEl = unit.querySelector(`[id^="search-comment-${commentId}"]`) || unit.querySelector(".i18n-search-comment-content");
       const body = contentEl?.textContent?.trim();
       if (!body) continue;
+      const bodyHtml = contentEl?.innerHTML?.trim() || "";
 
       let score = 0;
       const votesContainer = unit.querySelector("p.text-neutral-content-weak");
@@ -421,7 +616,7 @@
       const author = getCanonicalAuthor(context, unit, expectedUsername);
 
       comments.push({
-        id: commentId, body, score, subreddit, author,
+        id: commentId, body, bodyHtml, score, subreddit, author,
         post_title: context.post?.title || '',
         permalink: `/r/${subreddit}/comments/${postIdClean}/comment/${commentIdClean}/`,
         created_utc
@@ -452,12 +647,16 @@
 
       const subreddit = context.subreddit?.name || '';
       const author = getCanonicalAuthor(context, parentContainer, expectedUsername);
+      const previewText = extractPostPreviewText(context.post, parentContainer, context.post.title);
+      const thumbnailUrl = extractPostThumbnailUrl(context.post, parentContainer);
 
       seenIds.add(postId);
       return {
         id: postId, title: context.post.title, score, subreddit, author,
         permalink: `/r/${subreddit}/comments/${postId.replace('t3_', '')}/`,
-        created_utc, nsfw: context.post?.nsfw || false
+        created_utc, nsfw: context.post?.nsfw || false,
+        previewText,
+        thumbnailUrl
       };
     };
 
@@ -531,6 +730,9 @@
         if (!Number.isNaN(parsed)) created_utc = parsed / 1000;
       }
 
+      const previewText = extractPostPreviewText({}, result, title);
+      const thumbnailUrl = extractPostThumbnailUrl({}, result);
+
       seenIds.add(id);
       posts.push({
         id,
@@ -540,7 +742,9 @@
         author: author || expected,
         permalink,
         created_utc,
-        nsfw: result.classList.contains('over18')
+        nsfw: result.classList.contains('over18'),
+        previewText,
+        thumbnailUrl
       });
     }
 
@@ -674,6 +878,8 @@
   function createPostElement(post) {
     const postDate = formatTimestamp(post.created_utc);
     const postUrl = `https://www.reddit.com${post.permalink}`;
+    const previewText = normalizeTextSnippet(post.previewText || "");
+    const thumbnailUrl = sanitizeImageUrl(post.thumbnailUrl || "");
     return `
       <div class="rpu-item" style="background: var(--color-neutral-background, #1a1a1b); border: 1px solid var(--color-neutral-border, #343536); border-radius: 8px; padding: 16px; margin-bottom: 8px;">
         <div style="display: flex; gap: 12px;">
@@ -681,13 +887,15 @@
             <span style="color: #818384; font-weight: 600; font-size: 14px;">↑</span>
             <span style="color: #818384; font-weight: 600; font-size: 12px;">${post.score}</span>
           </div>
-          <div style="flex: 1;">
+          <div style="flex: 1; min-width: 0;">
             <div style="margin-bottom: 4px;">
               <a href="https://www.reddit.com/r/${post.subreddit}" style="color: #4fbcff; text-decoration: none; font-size: 12px; font-weight: 500;">r/${post.subreddit}</a>
               <span style="color: #818384; font-size: 12px; margin-left: 8px;">• ${postDate}</span>
             </div>
             <a href="${postUrl}" target="_blank" style="color: #d7dadc; text-decoration: none; font-size: 16px; font-weight: 500; line-height: 1.4; display: block;">${escapeHtml(post.title)}</a>
+            ${previewText ? `<a href="${postUrl}" target="_blank" style="color: #9ca3af; text-decoration: none; font-size: 13px; line-height: 1.5; margin-top: 8px; display: block; white-space: pre-wrap; word-break: break-word;">${escapeHtml(previewText)}</a>` : ""}
           </div>
+          ${thumbnailUrl ? `<a href="${postUrl}" target="_blank" style="display: block; width: 96px; height: 96px; flex-shrink: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--color-neutral-border, #343536);"><img src="${thumbnailUrl}" alt="Post preview" loading="lazy" style="width: 100%; height: 100%; object-fit: cover; display: block;"></a>` : ""}
         </div>
       </div>`;
   }
@@ -695,8 +903,7 @@
   function createCommentElement(comment) {
     const commentDate = formatTimestamp(comment.created_utc);
     const commentUrl = `https://www.reddit.com${comment.permalink}`;
-    let bodyText = comment.body || '';
-    if (bodyText.length > 300) bodyText = bodyText.substring(0, 300) + '...';
+    const bodyHtml = renderCommentBodyHtml(comment);
 
     return `
       <div class="rpu-item" style="background: var(--color-neutral-background, #1a1a1b); border: 1px solid var(--color-neutral-border, #343536); border-radius: 8px; padding: 16px; margin-bottom: 8px;">
@@ -705,7 +912,7 @@
           <span style="color: #818384; font-size: 12px; margin-left: 8px;">• ${commentDate}</span>
         </div>
         ${comment.post_title ? `<a href="${commentUrl}" target="_blank" style="color: #818384; font-size: 13px; margin-bottom: 8px; font-style: italic; display: block; text-decoration: none;">${escapeHtml(comment.post_title)}</a>` : ""}
-        <a href="${commentUrl}" target="_blank" style="color: #d7dadc; font-size: 14px; line-height: 1.6; margin-bottom: 8px; white-space: pre-wrap; word-wrap: break-word; display: block; text-decoration: none;">${escapeHtml(bodyText)}</a>
+        <div style="color: #d7dadc; font-size: 14px; line-height: 1.6; margin-bottom: 8px; white-space: normal; word-break: break-word; overflow-wrap: anywhere;">${bodyHtml}</div>
         <div style="display: flex; gap: 12px; align-items: center;">
           <span style="color: #ff4500; font-weight: 600; font-size: 12px;">↑ ${comment.score}</span>
           <a href="${commentUrl}" target="_blank" style="color: #4fbcff; text-decoration: none; font-size: 12px;">View context</a>
