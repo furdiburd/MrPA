@@ -8,6 +8,8 @@
   const INITIAL_LIMIT = 75;
   const INITIAL_DELAY = 100;
   const LOAD_MORE_DELAY = 200;
+  const QUICK_VISIBILITY_CHECK_LIMIT = 8;
+  const QUICK_VISIBILITY_RECENT_WINDOW = 3;
   const CACHE_DURATION = 10 * 60 * 1000;
   const CACHE_KEY_PREFIX = "rpu_cache_";
   const SEARCH_PAGE_BASE_URL = "https://www.reddit.com/search/";
@@ -435,6 +437,127 @@
     if (!href) return "";
     const match = href.match(/(?:reddit\.com)?\/(?:user|u)\/([^\/?#]+)/i);
     return match ? normalizeUsername(decodeURIComponent(match[1])) : "";
+  }
+
+  function normalizeThingId(value, prefix) {
+    if (!value) return "";
+    const pref = String(prefix || "").toLowerCase();
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized || !pref) return "";
+
+    const direct = normalized.match(new RegExp(`^${pref}_([a-z0-9]+)$`));
+    if (direct) return `${pref}_${direct[1]}`;
+
+    const embedded = normalized.match(new RegExp(`${pref}_([a-z0-9]+)`));
+    if (embedded) return `${pref}_${embedded[1]}`;
+
+    const bare = normalized.match(/^([a-z0-9]+)$/);
+    if (bare) return `${pref}_${bare[1]}`;
+    return "";
+  }
+
+  function extractPostIdFromHref(href) {
+    if (!href) return "";
+    try {
+      const url = new URL(href, "https://www.reddit.com");
+      const postMatch = url.pathname.toLowerCase().match(/\/comments\/([a-z0-9]+)(?:\/|$)/i);
+      return postMatch ? `t3_${postMatch[1].toLowerCase()}` : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function extractCommentIdFromHref(href) {
+    if (!href) return "";
+    try {
+      const url = new URL(href, "https://www.reddit.com");
+      const path = url.pathname.toLowerCase();
+      const commentMatch = path.match(/\/comment\/([a-z0-9]+)(?:\/|$)/i);
+      return commentMatch ? `t1_${commentMatch[1].toLowerCase()}` : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function collectVisibleProfileIds() {
+    const posts = new Set();
+    const comments = new Set();
+
+    const addThingId = (set, value, prefix) => {
+      const id = normalizeThingId(value, prefix);
+      if (id) set.add(id);
+    };
+
+    const fromNativeUi = (element) => !element.closest('#rpu-content');
+
+    const postLikeSelectors = '[data-fullname^="t3_"], [id^="t3_"], [thingid^="t3_"], shreddit-post[post-id], shreddit-post[id]';
+    document.querySelectorAll(postLikeSelectors).forEach((el) => {
+      if (!fromNativeUi(el)) return;
+      addThingId(posts, el.getAttribute('data-fullname'), 't3');
+      addThingId(posts, el.getAttribute('thingid'), 't3');
+      addThingId(posts, el.getAttribute('post-id'), 't3');
+      addThingId(posts, el.getAttribute('data-post-id'), 't3');
+      addThingId(posts, el.id, 't3');
+    });
+
+    const commentLikeSelectors = '[data-fullname^="t1_"], [id^="t1_"], [thingid^="t1_"], shreddit-comment[thingid], shreddit-comment[id]';
+    document.querySelectorAll(commentLikeSelectors).forEach((el) => {
+      if (!fromNativeUi(el)) return;
+      addThingId(comments, el.getAttribute('data-fullname'), 't1');
+      addThingId(comments, el.getAttribute('thingid'), 't1');
+      addThingId(comments, el.id, 't1');
+    });
+
+    document.querySelectorAll('a[href*="/comments/"]').forEach((anchor) => {
+      if (!fromNativeUi(anchor)) return;
+      const href = anchor.getAttribute('href') || anchor.href || '';
+      const postId = extractPostIdFromHref(href);
+      const commentId = extractCommentIdFromHref(href);
+      if (postId) posts.add(postId);
+      if (commentId) comments.add(commentId);
+    });
+
+    return { posts, comments };
+  }
+
+  function hasRecentVisibilityMismatch(fetchedItems, visibleIds, prefix) {
+    if (!Array.isArray(fetchedItems) || !visibleIds || visibleIds.size === 0) return false;
+
+    const recentFetchedIds = fetchedItems
+      .map(item => normalizeThingId(item?.id, prefix))
+      .filter(Boolean)
+      .slice(0, QUICK_VISIBILITY_RECENT_WINDOW);
+
+    if (!recentFetchedIds.length) return false;
+    return !recentFetchedIds.some(id => visibleIds.has(id));
+  }
+
+  async function shouldSwitchToHiddenMode(username, subpage) {
+    const visible = collectVisibleProfileIds();
+    const comparePosts = subpage !== 'comments' && (subpage === 'posts' || visible.posts.size > 0);
+    const compareComments = subpage !== 'posts' && (subpage === 'comments' || visible.comments.size > 0);
+
+    if (!comparePosts && !compareComments) return false;
+
+    const [postsResult, commentsResult] = await Promise.all([
+      comparePosts ? fetchUserPosts(username, null, QUICK_VISIBILITY_CHECK_LIMIT, 0, [], new Set()) : Promise.resolve({ posts: [] }),
+      compareComments ? fetchUserComments(username, null, QUICK_VISIBILITY_CHECK_LIMIT, 0, [], new Set()) : Promise.resolve({ comments: [] })
+    ]);
+
+    const postsMismatch = comparePosts && hasRecentVisibilityMismatch(postsResult.posts || [], visible.posts, 't3');
+    const commentsMismatch = compareComments && hasRecentVisibilityMismatch(commentsResult.comments || [], visible.comments, 't1');
+
+    if (DEBUG && (postsMismatch || commentsMismatch)) {
+      log('Detected hidden newest content on public profile', {
+        username,
+        postsMismatch,
+        commentsMismatch,
+        visiblePosts: visible.posts.size,
+        visibleComments: visible.comments.size
+      });
+    }
+
+    return postsMismatch || commentsMismatch;
   }
 
   function getStringAuthorCandidates(value, out) {
@@ -1282,7 +1405,18 @@
         attempts++;
       }
 
-      if (!isProfilePrivate()) return;
+      let forcePrivateMode = isProfilePrivate();
+      if (!forcePrivateMode) {
+        try {
+          forcePrivateMode = await shouldSwitchToHiddenMode(username, subpage);
+        } catch (err) {
+          error('Failed hidden-content visibility check:', err);
+          forcePrivateMode = false;
+        }
+      }
+
+      if (location.href !== activeUrl) return;
+      if (!forcePrivateMode) return;
 
       const cachedData = getCachedData(username);
       let posts = [], comments = [];
