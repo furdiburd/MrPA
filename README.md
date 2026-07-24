@@ -16,9 +16,7 @@ MrPa uses Reddit's own search pages to fetch a user's recent posts and comments 
 - On chrome just install it from the Chrome Webstore
 - https://chromewebstore.google.com/detail/make-reddit-profiles-publ/omeekklkkanmadacloahobkakdclmdip
 
-- The extension is not yet avabile in the Firefox Add-ons. For now you can install it manually as an unpacked extension.
-- Clone or download this repository.
-- In Chrome/Edge: Go to `chrome://extensions/`, enable "Developer mode", click "Load unpacked", and select the folder where you downloaded the repo.
-- In Firefox: Go to `about:debugging#/runtime/this-firefox`, click "Load Temporary Add-on", and select the manifest.json file in the downloaded repo folder.
+- On Firefox, install it from the Firefox Add-ons site
+- https://addons.mozilla.org/en-US/firefox/addon/make-reddit-profiles-public-ag/
 - The extension should now be active. Visit a Reddit user profile with private contributions to see it in action.
 
