@@ -579,25 +579,6 @@
     if (extracted) out.add(extracted);
   }
 
-  function collectContextAuthorCandidates(value, out, depth = 0) {
-    if (depth > 6 || value == null) return;
-
-    if (Array.isArray(value)) {
-      for (const item of value) collectContextAuthorCandidates(item, out, depth + 1);
-      return;
-    }
-
-    if (typeof value !== "object") return;
-
-    for (const [key, nested] of Object.entries(value)) {
-      const lowerKey = key.toLowerCase();
-      if (typeof nested === "string" && (lowerKey.includes("author") || lowerKey.includes("user") || lowerKey.includes("username"))) {
-        getStringAuthorCandidates(nested, out);
-      }
-      collectContextAuthorCandidates(nested, out, depth + 1);
-    }
-  }
-
   function getAuthorCandidates(context, unitEl = null) {
     const candidates = new Set();
     getStringAuthorCandidates(context?.author, candidates);
@@ -607,12 +588,23 @@
     getStringAuthorCandidates(context?.comment?.authorName, candidates);
     getStringAuthorCandidates(context?.post?.author, candidates);
     getStringAuthorCandidates(context?.post?.authorName, candidates);
-    collectContextAuthorCandidates(context, candidates);
 
     if (unitEl) {
-      const authorEl = unitEl.querySelector('a[data-testid*="author" i][href], [data-testid*="author" i] a[href], a[href*="/user/"], a[href*="/u/"]');
-      const hrefUser = extractUsernameFromHref(authorEl?.getAttribute('href') || authorEl?.href || "");
-      if (hrefUser) candidates.add(hrefUser);
+      const hovercards = unitEl.querySelectorAll('faceplate-hovercard[data-id="user-hover-card"]');
+      for (const hc of hovercards) {
+        const label = (hc.getAttribute('label') || '').trim();
+        const labelAuthor = normalizeUsername(label.replace(/\s+details\s*$/i, ''));
+        if (labelAuthor) candidates.add(labelAuthor);
+
+        const innerAnchor = hc.querySelector('a');
+        const anchorText = (innerAnchor?.textContent || '').trim();
+        const anchorAuthor = normalizeUsername(anchorText);
+        if (anchorAuthor) candidates.add(anchorAuthor);
+      }
+
+      const testidAuthorEl = unitEl.querySelector('a[data-testid*="author" i][href], [data-testid*="author" i] a[href]');
+      const testidUser = extractUsernameFromHref(testidAuthorEl?.getAttribute('href') || testidAuthorEl?.href || "");
+      if (testidUser) candidates.add(testidUser);
     }
 
     return candidates;
@@ -622,19 +614,23 @@
     const expected = normalizeUsername(expectedUsername);
     if (!expected || !unitEl) return false;
 
-    const compactText = (unitEl.textContent || "").replace(/\s+/g, " ").toLowerCase();
+    const compactText = (unitEl.textContent || "").replace(/\s+/g, " ").toLowerCase().trim();
     if (!compactText) return false;
 
     const escapedExpected = escapeRegExp(expected);
-    const commentLikeByline = new RegExp(`(^|\\s)${escapedExpected}\\s*·\\s*`, "i");
-    const postLikeByline = new RegExp(`·\\s*${escapedExpected}\\s*·`, "i");
-
-    return commentLikeByline.test(compactText) || postLikeByline.test(compactText);
+    const authorInByline = new RegExp(`(?:^|\\s)${escapedExpected}(?:\\s|$)`, "i");
+    const firstDot = compactText.indexOf("·");
+    const secondDot = firstDot === -1 ? -1 : compactText.indexOf("·", firstDot + 1);
+    const region = secondDot === -1 ? compactText.slice(0, 240) : compactText.slice(0, secondDot);
+    return authorInByline.test(region);
   }
 
   function isAuthorMatch(context, unitEl, expectedUsername) {
     const expected = normalizeUsername(expectedUsername);
     if (!expected) return true;
+
+    const commentAuthor = normalizeUsername(context?.comment?.author || context?.comment?.authorName || "");
+    if (commentAuthor) return commentAuthor === expected;
 
     const candidates = getAuthorCandidates(context, unitEl);
     if (candidates.has(expected)) return true;
@@ -1015,8 +1011,8 @@
               <a href="https://www.reddit.com/r/${post.subreddit}" style="color: #4fbcff; text-decoration: none; font-size: 12px; font-weight: 500;">r/${post.subreddit}</a>
               <span style="color: #818384; font-size: 12px; margin-left: 8px;">• ${postDate}</span>
             </div>
-            <a href="${postUrl}" target="_blank" style="color: #d7dadc; text-decoration: none; font-size: 16px; font-weight: 500; line-height: 1.4; display: block;">${escapeHtml(post.title)}</a>
-            ${previewText ? `<a href="${postUrl}" target="_blank" style="color: #9ca3af; text-decoration: none; font-size: 13px; line-height: 1.5; margin-top: 8px; display: block; white-space: pre-wrap; word-break: break-word;">${escapeHtml(previewText)}</a>` : ""}
+            <a href="${postUrl}" target="_blank" style="color: var(--color-neutral-content-strong, #d7dadc); text-decoration: none; font-size: 16px; font-weight: 500; line-height: 1.4; display: block;">${escapeHtml(post.title)}</a>
+            ${previewText ? `<a href="${postUrl}" target="_blank" style="color: var(--color-neutral-content-strong, #d7dadc); text-decoration: none; font-size: 13px; line-height: 1.5; margin-top: 8px; display: block; white-space: pre-wrap; word-break: break-word;">${escapeHtml(previewText)}</a>` : ""}
           </div>
           ${thumbnailUrl ? `<a href="${postUrl}" target="_blank" style="display: block; width: 96px; height: 96px; flex-shrink: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--color-neutral-border, #343536);"><img src="${thumbnailUrl}" alt="Post preview" loading="lazy" style="width: 100%; height: 100%; object-fit: cover; display: block;"></a>` : ""}
         </div>
@@ -1035,7 +1031,7 @@
           <span style="color: #818384; font-size: 12px; margin-left: 8px;">• ${commentDate}</span>
         </div>
         ${comment.post_title ? `<a href="${commentUrl}" target="_blank" style="color: #818384; font-size: 13px; margin-bottom: 8px; font-style: italic; display: block; text-decoration: none;">${escapeHtml(comment.post_title)}</a>` : ""}
-        <div style="color: #d7dadc; font-size: 14px; line-height: 1.6; margin-bottom: 8px; white-space: normal; word-break: break-word; overflow-wrap: anywhere;">${bodyHtml}</div>
+        <div data-comment-url="${commentUrl}" style="color: var(--color-neutral-content-strong, #d7dadc); cursor: pointer; font-size: 14px; line-height: 1.6; margin-bottom: 8px; white-space: normal; word-break: break-word; overflow-wrap: anywhere;">${bodyHtml}</div>
         <div style="display: flex; gap: 12px; align-items: center;">
           <span style="color: #ff4500; font-weight: 600; font-size: 12px;">↑ ${comment.score}</span>
           <a href="${commentUrl}" target="_blank" style="color: #4fbcff; text-decoration: none; font-size: 12px;">View context</a>
@@ -1172,6 +1168,22 @@
     const feedContainer = document.createElement('div');
     feedContainer.id = 'rpu-feed';
     feedContainer.style.cssText = 'padding: 0 16px;';
+
+    feedContainer.addEventListener('mousedown', (e) => {
+      if (e.button !== 1) return;
+      const bodyEl = e.target.closest('[data-comment-url]');
+      if (!bodyEl || e.target.closest('a')) return;
+      e.preventDefault();
+      const url = bodyEl.getAttribute('data-comment-url');
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    });
+    feedContainer.addEventListener('click', (e) => {
+      const bodyEl = e.target.closest('[data-comment-url]');
+      if (!bodyEl) return;
+      if (e.target.closest('a')) return;
+      const url = bodyEl.getAttribute('data-comment-url');
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    });
 
     const subpage = getSubpageType();
     if (subpage === 'comments') loadMorePostsBtn.style.display = 'none';
